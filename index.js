@@ -2603,13 +2603,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }); 
             } 
             catch (err) { 
-    console.error("🔴 STRIPE SESSION ERROR:", err.message); // Aparece nos logs da Discloud
-    console.error("🔴 STRIPE TYPE:", err.type);
-    console.error("🔴 STRIPE PARAM:", err.param);
+    console.error("🔴 STRIPE SESSION ERROR:", err.message); 
+    console.error("🔴 STRIPE TYPE:", err.type); 
+    console.error("🔴 STRIPE PARAM:", err.param); 
     
     await interaction.editReply({ 
-        content: `❌ Stripe Error: ${err.message}`, // Mostra o erro real no Discord
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] 
+        content: ` Stripe Error: ${err.message}`, 
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Start New Order").setStyle(ButtonStyle.Secondary))] 
     }); 
 }
         }
