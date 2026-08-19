@@ -2603,8 +2603,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }); 
             } 
             catch (err) { 
-                await interaction.editReply({ content: "❌ Error creating Stripe session.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] }); 
-            }
+    console.error("🔴 STRIPE SESSION ERROR:", err.message); // Aparece nos logs da Discloud
+    console.error("🔴 STRIPE TYPE:", err.type);
+    console.error("🔴 STRIPE PARAM:", err.param);
+    
+    await interaction.editReply({ 
+        content: `❌ Stripe Error: ${err.message}`, // Mostra o erro real no Discord
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] 
+    }); 
+}
         }
 
         if (interaction.isButton() && interaction.customId === "pay_lindens") {
