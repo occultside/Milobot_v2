@@ -12,25 +12,36 @@ console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Leng
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
+// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
 const rawKey = process.env.GOOGLE_PRIVATE_KEY;
 const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
 
-if (!rawKey || !rawEmail) {
-    console.error("🔴 CRITICAL: Missing GOOGLE_PRIVATE_KEY or GOOGLE_CLIENT_EMAIL");
+// DIAGNÓSTICO PRECISO: Identifica qual das duas está faltando
+if (!rawKey && !rawEmail) {
+    console.error("🔴 CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
+    console.error("💡 Tip: Check Discloud Env Variables panel and force Restart.");
+    process.exit(1);
+} else if (!rawKey) {
+    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
+    console.error("   Found Email:", rawEmail?.substring(0, 20) + "...");
+    process.exit(1);
+} else if (!rawEmail) {
+    console.error("🔴 CRITICAL: GOOGLE_CLIENT_EMAIL is missing!");
+    console.error("   Key Length:", rawKey.length);
     process.exit(1);
 }
 
 // Força limpeza total para eliminar qualquer caractere invisível ou cache
 let cleanKey = rawKey
-    .replace(/\\n/g, '\n')   // Converte \n literais
-    .replace(/\r\n/g, '\n')  // Normaliza CRLF
-    .trim();                 // Remove espaços/tabs nas pontas
+    .replace(/\n/g, '\n')   // Converte \n literais
+    .replace(/\r\n/g, '\n') // Normaliza CRLF
+    .trim();                // Remove espaços/tabs nas pontas
 
 // Validação de integridade PEM
 if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
     !cleanKey.includes('-----END PRIVATE KEY-----')) {
     console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted.");
+    console.error("   Start:", cleanKey.substring(0, 30));
     process.exit(1);
 }
 
