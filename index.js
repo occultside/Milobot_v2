@@ -6,6 +6,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
 process.env.TZ = 'America/Sao_Paulo';
+console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Length: " + process.env.GOOGLE_PRIVATE_KEY.length + ")" : "MISSING");
 
 // ====================== ESTADO GLOBAL ======================
 let isMaintenanceMode = false;
