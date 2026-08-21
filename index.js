@@ -12,13 +12,13 @@ console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Leng
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
+/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO E RECONSTRUIDO) ======================
 const rawKey = process.env.GOOGLE_PRIVATE_KEY;
 const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
 
 // DIAGNÓSTICO PRECISO: Identifica qual das duas está faltando
 if (!rawKey && !rawEmail) {
-    console.error("🔴 CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
+    console.error(" CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
     console.error("💡 Tip: Check Discloud Env Variables panel and force Restart.");
     process.exit(1);
 } else if (!rawKey) {
@@ -31,16 +31,26 @@ if (!rawKey && !rawEmail) {
     process.exit(1);
 }
 
-// Força limpeza total para eliminar qualquer caractere invisível ou cache
+// Força limpeza total e reconstrução segura do PEM para evitar erro DECODER routines::unsupported
 let cleanKey = rawKey
-    .replace(/\n/g, '\n')   // Converte \n literais
-    .replace(/\r\n/g, '\n') // Normaliza CRLF
-    .trim();                // Remove espaços/tabs nas pontas
+    .replace(/\\n/g, '\n')          // Converte \n literais vindos de JSON/env
+    .replace(/\r\n/g, '\n')         // Normaliza CRLF
+    .replace(/[^\S\r\n]+/g, '')     // Remove espaços/tabs entre linhas
+    .trim();                        // Remove espaços nas pontas
+
+// Reconstrói o PEM garantindo quebras de linha exatas e removendo marcadores duplicados/corrompidos
+const keyLines = cleanKey.split('\n').filter(line => line.trim() !== '');
+const bodyLines = keyLines.filter(line => 
+    !line.includes('-----BEGIN') && !line.includes('-----END')
+);
+cleanKey = '-----BEGIN PRIVATE KEY-----\n' + 
+           bodyLines.join('\n') + 
+           '\n-----END PRIVATE KEY-----';
 
 // Validação de integridade PEM
 if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
     !cleanKey.includes('-----END PRIVATE KEY-----')) {
-    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted.");
+    console.error(" CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted after reconstruction.");
     console.error("   Start:", cleanKey.substring(0, 30));
     process.exit(1);
 }
