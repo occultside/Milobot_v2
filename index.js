@@ -16,14 +16,23 @@ const DEV_IDS = ["721614093269729292", "971051392456331324", "135614012986517522
 const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 if (!googlePrivateKey) {
     console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
-    console.error("Bot cannot start without valid Google Sheets credentials.");
-    process.exit(1); // Para o bot com mensagem clara em vez de crashar feio
+    process.exit(1);
 }
+
+// Normaliza a chave para garantir formato correto independente de como foi injetada
+let normalizedKey = googlePrivateKey;
+// Se a chave NÃO contém quebras de linha reais, assume que \n são literais e converte
+if (!normalizedKey.includes('\n')) {
+    normalizedKey = normalizedKey.replace(/\\n/g, '\n');
+}
+// Remove espaços invisíveis nas extremidades que podem quebrar a assinatura
+normalizedKey = normalizedKey.trim();
 
 const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: googlePrivateKey.replace(/\\n/g, '\n') // Substitui \n literal por quebra de linha real
+    private_key: normalizedKey
 };
+// ==============================================================================
 
 // Logs de debug para verificar se a chave foi formatada corretamente
 console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
