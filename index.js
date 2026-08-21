@@ -2614,90 +2614,91 @@ if (action === "portfolio") {
         }
 
         if (interaction.isButton() && interaction.customId === "pay_stripe") {
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-            const s = clientSession[interaction.user.id]; 
-            if (!s || s.step !== "waiting_for_payment_method") return interaction.editReply({ content: "❌ Session expired or invalid.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
-            
-            const customer = await ensureCustomer(interaction.user.id); 
-            if ((customer.blocked_stores || []).includes(s.product.store)) return interaction.editReply({ content: "🚫 Access Denied." });
-            
-            const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium'; 
-            const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price;
-            
-            // Preço original do produto
-            let priceRaw = isPremium ? parseFloat(prices.premium_stripe.replace('$', '')) : parseFloat(prices.basic_stripe.replace('$', '')); 
-            const availableCredits = await getCreditBalance(interaction.user.id, s.product.store); 
-            let creditsToUse = 0;
+    await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+    const s = clientSession[interaction.user.id];
+    if (!s || s.step !== "waiting_for_payment_method") return interaction.editReply({ content: " Session expired or invalid.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
 
-            // LÓGICA CORREGIDA: 
-            // Se o cliente tem créditos, perguntamos se ele quer usar. 
-            // NÃO usamos automaticamente no botão Stripe para evitar confusão.
-            // Se quiser usar créditos, ele deve clicar no botão "Pay with Credits" (que já existe no seu código).
-            
-            // Se por acaso o preço for 0 (produto grátis ou erro), tratamos aqui:
-            if (priceRaw <= 0) {
-                 // Tratamento de produto gratuito ou erro de preço
-                 await registerPurchase(interaction.user.id); 
-                 updateSaleInSheet(s.product.id, interaction.user.id, "Free/Gift", "", "Discord", 0, 0).catch(e => {}); 
-                 const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [s.product.id])).rows[0]; 
-                 await sendToPortfolio(product, interaction.user.id); 
-                 await syncShowcase({ ...product, archived: true }); 
-                 
-                 // ENTREGA DO PRODUTO (CORREÇÃO PRINCIPAL)
-                 try {
-                     const dm = await interaction.user.createDM();
-                     await dm.send({ 
-                         content: `**✅ PURCHASE SUCCESSFUL!**\n\nThank you for your purchase!\n\nClick the button below to receive your product:`, 
-                         components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("📥 Receive Product").setStyle(ButtonStyle.Link).setURL(product.file_download))] 
-                     });
-                 } catch (e) {
-                     console.error("Failed to send DM delivery:", e);
-                 }
+    const customer = await ensureCustomer(interaction.user.id);
+    if ((customer.blocked_stores || []).includes(s.product.store)) return interaction.editReply({ content: "🚫 Access Denied." });
 
-                 // Limpar fila e notificar
-                 await clearQueueAndNotifyBought(s.product.id, s.product.store);
-                 
-                 // PARAR TIMER E LIMPAR SESSÃO
-                 if (clientSession[interaction.user.id]?.paymentTimeoutId) clearTimeout(clientSession[interaction.user.id].paymentTimeoutId);
-                 delete clientSession[interaction.user.id];
+    const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
+    const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price;
+    let priceRaw = isPremium ? parseFloat(prices.premium_stripe.replace('$', '')) : parseFloat(prices.basic_stripe.replace('$', ''));
 
-                 return interaction.editReply({ 
-                     content: "✅ Purchase successful! Check your DMs for the download link.", 
-                     components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Primary))] 
-                 }); 
+    // Tratamento de produto gratuito ou erro de preço
+    if (priceRaw <= 0) {
+        await registerPurchase(interaction.user.id);
+        updateSaleInSheet(s.product.id, interaction.user.id, "Free/Gift", "", "Discord", 0, 0).catch(e => {});
+        const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [s.product.id])).rows[0];
+        await sendToPortfolio(product, interaction.user.id);
+        await syncShowcase({ ...product, archived: true });
+
+        try {
+            const dm = await interaction.user.createDM();
+            await dm.send({
+                content: `**✅ PURCHASE SUCCESSFUL!**\n\nThank you for your purchase!\n\nClick the button below to receive your product:`,
+                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("📥 Receive Product").setStyle(ButtonStyle.Link).setURL(product.file_download))]
+            });
+        } catch (e) { console.error("Failed to send DM delivery:", e); }
+
+        await clearQueueAndNotifyBought(s.product.id, s.product.store);
+        if (clientSession[interaction.user.id]?.paymentTimeoutId) clearTimeout(clientSession[interaction.user.id].paymentTimeoutId);
+        delete clientSession[interaction.user.id];
+
+        return interaction.editReply({
+            content: "✅ Purchase successful! Check your DMs for the download link.",
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Primary))]
+        });
+    }
+
+    const stripeClient = stripeClients[s.product.store];
+    const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
+
+    try {
+        const session = await stripeClient.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [{ price: priceId, quantity: 1 }],
+            mode: 'payment',
+            success_url: 'https://discord.com',
+            cancel_url: 'https://discord.com',
+            client_reference_id: interaction.user.id,
+            metadata: { product_id: s.product.id, store: s.product.store, credits_used: 0 }
+        });
+
+        // 🔒 BLINDAGEM DE URL: Garante que não ultrapasse 512 caracteres
+        let safeUrl = session.url;
+        if (safeUrl && safeUrl.length > 512) {
+            console.warn(`⚠️ Stripe URL too long (${safeUrl.length} chars). Trimming parameters...`);
+            const baseUrl = safeUrl.split('?')[0];
+            const params = new URLSearchParams(safeUrl.split('?')[1]);
+            const essentialParams = new URLSearchParams();
+            // Mantém apenas parâmetros essenciais para o checkout funcionar
+            ['session_id', 'locale'].forEach(key => {
+                if (params.has(key)) essentialParams.set(key, params.get(key));
+            });
+            safeUrl = `${baseUrl}?${essentialParams.toString()}`;
+
+            // Se ainda estiver longo, usa fallback seguro
+            if (safeUrl.length > 512) {
+                console.error(`❌ CRITICAL: URL still too long after trimming (${safeUrl.length}). Using dashboard fallback.`);
+                safeUrl = `https://dashboard.stripe.com/payments/${session.payment_intent || 'search'}`;
             }
-
-            // Se o preço for maior que 0, prossegue para o Stripe normal
-            const stripeClient = stripeClients[s.product.store]; 
-            const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
-            
-            try { 
-                const session = await stripeClient.checkout.sessions.create({ 
-                    payment_method_types: ['card'], 
-                    line_items: [{ price: priceId, quantity: 1 }], 
-                    mode: 'payment', 
-                    success_url: 'https://discord.com', 
-                    cancel_url: 'https://discord.com', 
-                    client_reference_id: interaction.user.id, 
-                    metadata: { product_id: s.product.id, store: s.product.store, credits_used: 0 } // Créditos usados = 0 pois foi via Stripe
-                }); 
-                await interaction.editReply({ 
-                    content: `💳 Click below to pay **$${priceRaw.toFixed(2)}** via Stripe:`, 
-                    components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Pay Now").setStyle(ButtonStyle.Link).setURL(session.url))] 
-                }); 
-            } 
-            catch (err) { 
-    console.error("🔴 STRIPE SESSION ERROR:", err.message); 
-    console.error("🔴 STRIPE TYPE:", err.type); 
-    console.error("🔴 STRIPE PARAM:", err.param); 
-    
-    await interaction.editReply({ 
-        content: ` Stripe Error: ${err.message}`, 
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Start New Order").setStyle(ButtonStyle.Secondary))] 
-    }); 
-}
         }
 
+        await interaction.editReply({
+            content: `💳 Click below to pay **$${priceRaw.toFixed(2)}** via Stripe:`,
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Pay Now").setStyle(ButtonStyle.Link).setURL(safeUrl))]
+        });
+    } catch (err) {
+        console.error("🔴 STRIPE SESSION ERROR:", err.message);
+        console.error(" STRIPE TYPE:", err.type);
+        console.error("🔴 STRIPE PARAM:", err.param);
+        await interaction.editReply({
+            content: `⚠️ Stripe Error: ${err.message}`,
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))]
+        });
+    }
+}
         if (interaction.isButton() && interaction.customId === "pay_lindens") {
             const s = clientSession[interaction.user.id]; 
             if (!s || s.step !== "waiting_for_payment_method") return interaction.reply({ content: "❌ Session expired.", flags: [MessageFlags.Ephemeral], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
