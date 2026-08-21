@@ -24,6 +24,11 @@ const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
     private_key: googlePrivateKey.replace(/\\n/g, '\n') // Substitui \n literal por quebra de linha real
 };
+
+// Logs de debug para verificar se a chave foi formatada corretamente
+console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
+console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
+
 const SHOWCASE_FORUM_ID = "1512933679448457348";
 const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
 const ID_MICSCARR = "721614093269729292";
@@ -68,7 +73,6 @@ function formatBrasiliaDate(dateObj) {
     const s = String(dateObj.getSeconds()).padStart(2, '0');
     return `${d}/${m}/${y} ${h}:${min}:${s}`;
 }
-
 // ====================== FUNÇÃO AUXILIAR: NOTIFICAÇÃO DISTRIBUÍDA ======================
 async function sendApprovalEmbed(store, embed, components, approvalKey) {
     let owners = [];
