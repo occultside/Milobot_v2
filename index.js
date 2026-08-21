@@ -5,55 +5,694 @@ const Stripe = require('stripe');
 const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
-// ====================== INÍCIO BLINDADO CONTRA .ENV LOCAL ======================
 process.env.TZ = 'America/Sao_Paulo';
-
-// Lê DIRETAMENTE do ambiente do SO, ignorando dotenv/config() se houver conflito
-const GOOGLE_PRIVATE_KEY_RAW = process.env.GOOGLE_PRIVATE_KEY;
-const GOOGLE_CLIENT_EMAIL_RAW = process.env.GOOGLE_CLIENT_EMAIL;
-
-console.log("🔐 ENV CHECK - KEY PRESENT:", !!GOOGLE_PRIVATE_KEY_RAW);
-console.log(" ENV CHECK - EMAIL:", GOOGLE_CLIENT_EMAIL_RAW || "MISSING");
-
-if (!GOOGLE_PRIVATE_KEY_RAW || !GOOGLE_CLIENT_EMAIL_RAW) {
-    console.error(" CRITICAL: Variáveis GOOGLE não encontradas no ambiente do SO.");
-    process.exit(1);
-}
-
-// Normalização agressiva da chave para evitar invalid_grant
-let cleanKey = GOOGLE_PRIVATE_KEY_RAW
-    .replace(/\\n/g, '\n')   // Converte \n literais em quebra real
-    .replace(/\r\n/g, '\n')  // Normaliza CRLF (Windows) para LF
-    .trim();                 // Remove espaços/tabs invisíveis nas pontas
-
-// Validação PEM explícita
-if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
-    !cleanKey.includes('-----END PRIVATE KEY-----')) {
-    console.error("🔴 CRITICAL: Formato da chave inválido após limpeza.");
-    process.exit(1);
-}
-
-const SERVICE_ACCOUNT_KEY = {
-    client_email: GOOGLE_CLIENT_EMAIL_RAW.trim(),
-    private_key: cleanKey
-};
-
-console.log("✅ Google Auth Configured for:", SERVICE_ACCOUNT_KEY.client_email);
-console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
-console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
-// ====================== FIM DO BLOCO BLINDADO ======================
-
-// IMPORTAÇÕES (Agora seguras, pois estão APÓS a configuração das variáveis)
-const { Client, GatewayIntentBits, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AttachmentBuilder } = require("discord.js");
-const { Pool } = require('pg');
-const Stripe = require('stripe');
-const express = require('express');
-const fetch = require('node-fetch');
-const { JWT } = require('google-auth-library');
+console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Length: " + process.env.GOOGLE_PRIVATE_KEY.length + ")" : "MISSING");
 
 // ====================== ESTADO GLOBAL ======================
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
+
+/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
+const rawKey = process.env.GOOGLE_PRIVATE_KEY;
+const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
+
+if (!rawKey || !rawEmail) {
+    console.error("🔴 CRITICAL: Missing GOOGLE_PRIVATE_KEY or GOOGLE_CLIENT_EMAIL");
+    process.exit(1);
+}
+
+// Força limpeza total para eliminar qualquer caractere invisível ou cache
+let cleanKey = rawKey
+    .replace(/\\n/g, '\n')   // Converte \n literais
+    .replace(/\r\n/g, '\n')  // Normaliza CRLF
+    .trim();                 // Remove espaços/tabs nas pontas
+
+// Validação de integridade PEM
+if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
+    !cleanKey.includes('-----END PRIVATE KEY-----')) {
+    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted.");
+    process.exit(1);
+}
+
+const SERVICE_ACCOUNT_KEY = {
+    client_email: rawEmail.trim(), // Garante que não há espaços no email
+    private_key: cleanKey
+};
+
+// LOG DE VERIFICAÇÃO ABSOLUTA (Mantenha até resolver)
+console.log("🔐 AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
+console.log("🔐 KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
+// ==============================================================================
+
+// Logs de debug para verificar se a chave foi formatada corretamente
+console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
+console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
+
+const SHOWCASE_FORUM_ID = "1512933679448457348";
+const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
+const ID_MICSCARR = "721614093269729292";
+const ID_POLYPIE = "971051392456331324";
+const ID_OCCULTSIDE_OFFICIAL = "1356140129865175221";
+
+let usdBrlCache = { rate: null, timestamp: 0 };
+const CACHE_DURATION = 5 * 60 * 1000;
+
+async function getUsdBrlRate() {
+    try {
+        const now = Date.now();
+        if (usdBrlCache.rate && (now - usdBrlCache.timestamp) < CACHE_DURATION) return usdBrlCache.rate;
+        const response = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL');
+        const data = await response.json();
+        const rate = parseFloat(data.USDBRL.bid);
+        usdBrlCache = { rate, timestamp: now };
+        return rate;
+    } catch (err) {
+        console.error("Erro ao buscar cotação USD:", err.message);
+        return usdBrlCache.rate || 5.0;
+    }
+}
+
+async function getJwtClient() {
+    const jwtClient = new JWT({
+        email: SERVICE_ACCOUNT_KEY.client_email,
+        key: SERVICE_ACCOUNT_KEY.private_key,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    await jwtClient.authorize();
+    return jwtClient;
+}
+
+function formatBrasiliaDate(dateObj) {
+    if (!dateObj) dateObj = new Date();
+    const d = String(dateObj.getDate()).padStart(2, '0');
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const y = dateObj.getFullYear();
+    const h = String(dateObj.getHours()).padStart(2, '0');
+    const min = String(dateObj.getMinutes()).padStart(2, '0');
+    const s = String(dateObj.getSeconds()).padStart(2, '0');
+    return `${d}/${m}/${y} ${h}:${min}:${s}`;
+}
+// ====================== FUNÇÃO AUXILIAR: NOTIFICAÇÃO DISTRIBUÍDA ======================
+async function sendApprovalEmbed(store, embed, components, approvalKey) {
+    let owners = [];
+    if (store === 'occult') owners = [ID_MICSCARR];
+    else if (store === 'side') owners = [ID_POLYPIE];
+    else if (store === 'occult_x_side') owners = [ID_MICSCARR, ID_POLYPIE];
+    
+    if (!owners.includes(ID_OCCULTSIDE_OFFICIAL)) owners.push(ID_OCCULTSIDE_OFFICIAL);
+
+    const sentMessages = [];
+    for (const ownerId of owners) {
+        try {
+            const user = await client.users.fetch(ownerId);
+            const msg = await user.send({ embeds: [embed], components: components });
+            sentMessages.push({ channelId: msg.channel.id, messageId: msg.id });
+        } catch (e) {
+            console.error(`Failed to send approval embed to ${ownerId}:`, e.message);
+        }
+    }
+    if (pendingApprovals[approvalKey]) {
+        pendingApprovals[approvalKey].messageRefs = sentMessages;
+    }
+}
+
+async function invalidateApprovalButtons(approvalData, actionText) {
+    if (!approvalData || !approvalData.messageRefs) return;
+    for (const ref of approvalData.messageRefs) {
+        try {
+            const channel = await client.channels.fetch(ref.channelId);
+            const msg = await channel.messages.fetch(ref.messageId);
+            await msg.edit({ content: actionText, embeds: msg.embeds, components: [] });
+        } catch (e) { /* ignore */ }
+    }
+}
+
+// ====================== FUNÇÃO DE PORTFÓLIO ======================
+async function sendToPortfolio(product, buyerId) {
+    try {
+        const forumChannel = client.channels.cache.get(PORTFOLIO_CHANNEL_ID);
+        if (!forumChannel) return;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${product.id}`)
+            .setDescription(`This item has been acquired and is now part of our portfolio.`)
+            .setImage(product.image)
+            .setColor(0x2ecc71)
+            .setFooter({ text: "Unavailable • Sold Item" })
+            .setTimestamp();
+            
+        const thread = await forumChannel.threads.create({
+            name: `${product.id}`,
+            message: { embeds: [embed] },
+            autoArchiveDuration: 10080,
+            reason: `Product ${product.id} sold and moved to portfolio.`
+        });
+    } catch (err) {
+        console.error("❌ Error sending to portfolio:", err.message);
+    }
+}
+
+// ====================== LÓGICA DE RELATÓRIOS (CORRIGIDA E DINÂMICA) ======================
+async function generateReportMetrics(store, type) {
+    const now = new Date();
+    let titlePrefix = "";
+    let referenceDateStr = "";
+    
+    // Definir período para filtro manual (já que vamos ler a planilha inteira e filtrar aqui)
+    let cutoffDate = new Date();
+    if (type === 'daily') {
+        cutoffDate.setHours(cutoffDate.getHours() - 24);
+        referenceDateStr = `Últimas 24h (até ${now.toLocaleTimeString('pt-BR')})`;
+        titlePrefix = "Resumo Diário";
+    } else if (type === 'monthly') {
+        cutoffDate.setDate(cutoffDate.getDate() - 30);
+        referenceDateStr = "Últimos 30 dias";
+        titlePrefix = "Resumo Mensal";
+    } else if (type === 'yearly') {
+        cutoffDate.setFullYear(cutoffDate.getFullYear() - 1);
+        referenceDateStr = "Último Ano";
+        titlePrefix = "Resumo Anual";
+    }
+
+    try {
+        const jwtClient = await getJwtClient();
+        
+        // 1. Buscar TODOS os dados da aba de Vendas
+        const salesRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A:R`, { 
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` } 
+        });
+        const salesData = await salesRes.json();
+        const salesRows = salesData.values || [];
+        
+        // Mapear cabeçalhos para saber qual coluna é qual
+        const headers = salesRows[0] || [];
+        const colMap = {};
+        headers.forEach((h, i) => { if(h) colMap[h.trim()] = i; });
+        
+        // Índices importantes baseados na sua planilha
+        const idxStore = colMap['Loja'] ?? 1;
+        const idxStatus = colMap['Status'] ?? 4;
+        const idxPrice = colMap['Valor Pago'] ?? 12; // Coluna M
+        const idxDate = colMap['Data Venda'] ?? 15; // Coluna P
+        const idxProdId = colMap['ID Produto'] ?? 0;
+
+        let itemsSold = 0;
+        let revenueUsd = 0;
+        let soldProductsList = [];
+
+        // Filtrar linhas manualmente
+        for (let i = 1; i < salesRows.length; i++) {
+            const row = salesRows[i];
+            if (!row || row.length === 0) continue;
+
+            const rowStore = row[idxStore] ? row[idxStore].replace('🛒 ', '').trim().toLowerCase() : '';
+            const rowStatus = row[idxStatus] ? row[idxStatus].trim() : '';
+            
+            // Verificar Loja
+            let storeMatch = false;
+            if (store === 'all') storeMatch = true;
+            else if (store === 'occult_x_side' && rowStore.includes('occult_x_side')) storeMatch = true;
+            else if (rowStore === store) storeMatch = true;
+
+            if (!storeMatch) continue;
+
+            // Verificar Status (Apenas vendidos)
+            if (!rowStatus.includes('Vendido') && !rowStatus.includes('🔴')) continue;
+
+            // Verificar Data
+            let dateValid = false;
+            if (row[idxDate]) {
+                // Formato esperado na planilha: DD/MM/AAAA HH:mm:ss
+                const parts = row[idxDate].split(' ');
+                if (parts[0]) {
+                    const [d, m, y] = parts[0].split('/').map(Number);
+                    const [h, min, s] = parts[1] ? parts[1].split(':').map(Number) : [0,0,0];
+                    const saleDate = new Date(y, m - 1, d, h, min, s);
+                    
+                    if (saleDate >= cutoffDate && saleDate <= now) {
+                        dateValid = true;
+                        
+                        // Somar Receita
+                        let priceVal = 0;
+                        if (row[idxPrice]) {
+                            // Limpar formatação "$109.09"
+                            const cleanPrice = row[idxPrice].toString().replace('$', '').replace(',', '.');
+                            priceVal = parseFloat(cleanPrice) || 0;
+                        }
+                        revenueUsd += priceVal;
+                        itemsSold++;
+                        
+                        // Adicionar à lista de produtos vendidos recentes
+                        soldProductsList.push({
+                            id: row[idxProdId],
+                            price: `$${priceVal.toFixed(2)}`,
+                            created_at: saleDate
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2. Tráfego e Novos Usuários (Estes continuam vindo do DB pois a planilha não registra cliques/novos usuários facilmente)
+        // Mantemos a lógica original do DB para estas métricas específicas, pois são mais complexas de rastrear só pela planilha de vendas
+        
+        let intervalSql = "";
+        if (type === 'daily') intervalSql = `NOW() - INTERVAL '24 hours'`;
+        else if (type === 'monthly') intervalSql = `NOW() - INTERVAL '30 days'`;
+        else if (type === 'yearly') intervalSql = `NOW() - INTERVAL '1 year'`;
+
+        let storeFilter = store === 'all' ? '' : `AND store = '${store}'`;
+        
+        // Cliques
+        const clicksRes = await pool.query(`SELECT COUNT(*) as count FROM product_interactions WHERE interacted_at >= ${intervalSql} ${storeFilter}`);
+        const totalClicks = parseInt(clicksRes.rows[0].count) || 0;
+
+        // Expirações
+        const expRes = await pool.query(`SELECT COUNT(*) as count FROM product_reservations WHERE status = 'EXPIRED' AND expires_at >= ${intervalSql} ${storeFilter}`);
+        const expirations = parseInt(expRes.rows[0].count) || 0;
+
+        // Top Visitados sem venda (Lógica complexa, mantemos do DB)
+        const topRes = await pool.query(`
+            SELECT pi.product_id, COUNT(*) as views 
+            FROM product_interactions pi 
+            LEFT JOIN partnership_approvals pa ON pi.product_id = pa.product_id AND pa.status = 'APPROVED' AND pa.created_at >= ${intervalSql.replace('created_at', 'pa.created_at')}
+            WHERE pi.interacted_at >= ${intervalSql.replace('created_at', 'pi.interacted_at')} 
+              AND pa.id IS NULL 
+              ${store === 'all' ? '' : `AND pi.store = '${store}'`}
+            GROUP BY pi.product_id 
+            ORDER BY views DESC LIMIT 3
+        `);
+
+        // Novos Usuários
+        const newUsersRes = await pool.query(`SELECT COUNT(*) as count FROM customers WHERE created_at >= ${intervalSql.replace('created_at', 'customers.created_at')}`);
+        const newUsers = parseInt(newUsersRes.rows[0].count) || 0;
+
+        return { 
+            itemsSold, 
+            revenueUsd, 
+            totalClicks, 
+            expirations, 
+            topProducts: topRes.rows, 
+            newUsers, 
+            soldProducts: soldProductsList, // Usando a lista extraída da planilha
+            titlePrefix, 
+            referenceDateStr 
+        };
+
+    } catch (err) {
+        console.error("Erro ao gerar métricas do relatório:", err);
+        // Fallback para zeros se der erro na planilha
+        return { 
+            itemsSold: 0, revenueUsd: 0, totalClicks: 0, expirations: 0, 
+            topProducts: [], newUsers: 0, soldProducts: [],
+            titlePrefix, referenceDateStr 
+        };
+    }
+}
+
+function buildReportEmbed(metrics, storeName) {
+    const embed = new EmbedBuilder()
+        .setTitle(`📊 ${metrics.titlePrefix} - ${storeName}`)
+        .setDescription(`Referente a: ${metrics.referenceDateStr}`)
+        .setColor(0x3498db)
+        .addFields(
+            { name: '💰 Vendas', value: `• Total Vendido: **${metrics.itemsSold} itens**\n• Receita: **$${metrics.revenueUsd.toFixed(2)} USD**`, inline: false },
+            { name: '📈 Tráfego & Interesse', value: `• Cliques em Produtos: **${metrics.totalClicks} acessos**\n• Expiraram na Fila: **${metrics.expirations} pessoas**`, inline: false },
+            { name: '👥 Clientes', value: `• Novos Usuários: **${metrics.newUsers}**`, inline: false }
+        );
+
+    // Correção aqui: Verifica se o preço é string ou objeto antes de tentar formatar
+    if (metrics.soldProducts.length > 0) {
+        const soldList = metrics.soldProducts.map(p => {
+            let val = '$?';
+            
+            // Se for string (vem da planilha), usa direto. Se for objeto (vem do DB), extrai o valor.
+            if (typeof p.price === 'string') {
+                val = p.price; 
+            } else if (typeof p.price === 'object' && p.price !== null) {
+                val = p.price.basic_stripe || '$?';
+            } else {
+                val = `$${p.price}`;
+            }
+            
+            return `• \`${p.id}\` (${val})`;
+        }).join('\n');
+        
+        embed.addFields({ name: '🛍️ Produtos Vendidos (Recentes)', value: soldList.substring(0, 1024), inline: false });
+    }
+
+    if (metrics.topProducts.length > 0) {
+        let topStr = metrics.topProducts.map((p, i) => `${i+1}. \`${p.product_id}\` (${p.views} cliques)`).join('\n');
+        embed.addFields({ name: '🔥 Top 3 Mais Visitados (Sem Compra)', value: `${topStr}\n*💡 Insight: Itens populares sem venda. Verifique preço.*`, inline: false });
+    } else {
+        embed.addFields({ name: '🔥 Top 3 Mais Visitados (Sem Compra)', value: 'Nenhum registro.', inline: false });
+    }
+
+    return embed;
+}
+
+// Relatorio Automatico Diario (00:00)
+function scheduleDailyReport() {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);
+    const timeUntilMidnight = nextMidnight.getTime() - now.getTime();
+    setTimeout(async () => {
+        await sendDailyReports();
+        scheduleDailyReport();
+    }, timeUntilMidnight);
+}
+
+async function sendDailyReports() {
+    console.log("📊 Gerando relatórios diários automáticos...");
+    try {
+        const metricsOccult = await generateReportMetrics('occult', 'daily');
+        const metricsSide = await generateReportMetrics('side', 'daily');
+        const metricsAll = await generateReportMetrics('all', 'daily');
+
+        try { await client.users.fetch(ID_MICSCARR).then(u => u.send({ embeds: [buildReportEmbed(metricsOccult, 'Occult Store')] })); } catch(e){}
+        try { await client.users.fetch(ID_POLYPIE).then(u => u.send({ embeds: [buildReportEmbed(metricsSide, 'Side Store')] })); } catch(e){}
+        try { await client.users.fetch(ID_OCCULTSIDE_OFFICIAL).then(u => u.send({ embeds: [buildReportEmbed(metricsAll, 'Occult x Side')] })); } catch(e){}
+        
+        console.log("✅ Relatórios diários enviados.");
+    } catch (err) {
+        console.error("❌ Erro relatórios:", err);
+    }
+}
+
+// ====================== FUNÇÕES DE PLANILHA ======================
+async function updateClientProfileSheet(userId, username, tier, storeOfPurchase, purchaseAmount) {
+    try {
+        const jwtClient = await getJwtClient();
+        
+        // 1. Buscar dados atuais da planilha para ver se usuário já existe
+        const fullRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CLIENT_PROFILE_SHEET)}!A:K`, { 
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` } 
+        });
+        const fullData = await fullRes.json();
+        const rows = fullData.values || [];
+        
+        let targetRowIndex = -1;
+        let currentTotalPurchases = 0; // Variável para guardar o total atual da planilha
+
+        // Procura pelo ID do usuário na coluna A (índice 0)
+        for (let i = 1; i < rows.length; i++) { 
+            if (rows[i][0] === userId) { 
+                targetRowIndex = i + 1; 
+                // Pega o valor atual da coluna D (Índice 3 é a coluna D, que é Total de Compras)
+                // Se existir um número, converte, senão assume 0
+                currentTotalPurchases = parseInt(rows[i][3]) || 0;
+                break; 
+            } 
+        }
+
+        // Coletar outros dados atualizados do Banco de Dados (Créditos, Risco, etc)
+        const creditsOccult = await getCreditBalance(userId, 'occult');
+        const creditsSide = await getCreditBalance(userId, 'side');
+        const creditsOXS = await getCreditBalance(userId, 'occult_x_side');
+        
+        const refundRes = await pool.query(`SELECT COUNT(*) FROM support_tickets WHERE user_id = $1 AND status = 'PENDING'`, [userId]);
+        const pendingRefunds = parseInt(refundRes.rows[0].count);
+        
+        // Para o Ticket Médio, ainda usamos o DB para precisão financeira, mas o Total de Compras vem da Planilha + 1
+        const historyRes = await pool.query(`SELECT s.product_id, p.price FROM partnership_approvals s JOIN products p ON s.product_id = p.id WHERE s.user_id = $1 AND s.status = 'APPROVED'`, [userId]);
+        
+        let totalSpent = 0;
+        historyRes.rows.forEach(row => { 
+            const priceObj = typeof row.price === 'string' ? JSON.parse(row.price) : row.price; 
+            totalSpent += parseFloat(priceObj.basic_stripe?.replace('$', '') || 0); 
+        });
+
+        // CORREÇÃO PRINCIPAL: Incrementa o total que já estava na planilha
+        const newTotalPurchases = currentTotalPurchases + 1;
+        
+        const avgTicket = newTotalPurchases > 0 ? `$${(totalSpent / newTotalPurchases).toFixed(2)}` : '$0.00';
+        
+        const riskRes = await pool.query(`SELECT COUNT(*) FROM support_tickets WHERE user_id = $1 AND status IN ('DENIED', 'PENDING')`, [userId]);
+        const riskStatus = parseInt(riskRes.rows[0].count) >= 3 ? '🚫 High Risk' : '✅ Normal';
+        
+        const tierDisplay = tier === 'premium' ? '💎 Premium' : '🌟 Basic';
+        const lastPurchaseDate = formatBrasiliaDate(new Date()); // Usa a data atual da venda
+
+        if (targetRowIndex !== -1) {
+            // Atualizar linha existente
+            const updates = [
+                { range: `${CLIENT_PROFILE_SHEET}!C${targetRowIndex}`, values: [[tierDisplay]] }, 
+                { range: `${CLIENT_PROFILE_SHEET}!D${targetRowIndex}`, values: [[newTotalPurchases]] }, // Salva o novo total
+                { range: `${CLIENT_PROFILE_SHEET}!E${targetRowIndex}`, values: [[lastPurchaseDate]] }, 
+                { range: `${CLIENT_PROFILE_SHEET}!F${targetRowIndex}`, values: [[`$${creditsOccult.toFixed(2)}`]] },
+                { range: `${CLIENT_PROFILE_SHEET}!G${targetRowIndex}`, values: [[`$${creditsSide.toFixed(2)}`]] }, 
+                { range: `${CLIENT_PROFILE_SHEET}!H${targetRowIndex}`, values: [[`$${creditsOXS.toFixed(2)}`]] },
+                { range: `${CLIENT_PROFILE_SHEET}!I${targetRowIndex}`, values: [[pendingRefunds]] }, 
+                { range: `${CLIENT_PROFILE_SHEET}!J${targetRowIndex}`, values: [[riskStatus]] }, 
+                { range: `${CLIENT_PROFILE_SHEET}!K${targetRowIndex}`, values: [[avgTicket]] }
+            ];
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, { 
+                method: 'POST', 
+                headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ valueInputOption: 'RAW', data: updates }) 
+            });
+        } else {
+            // Criar nova linha (Primeira compra)
+            const newRow = [
+                userId, 
+                username, 
+                tierDisplay, 
+                1, // Começa com 1
+                lastPurchaseDate, 
+                `$${creditsOccult.toFixed(2)}`, 
+                `$${creditsSide.toFixed(2)}`, 
+                `$${creditsOXS.toFixed(2)}`, 
+                pendingRefunds, 
+                riskStatus, 
+                avgTicket
+            ];
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(CLIENT_PROFILE_SHEET)}!A:K:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { 
+                method: 'POST', 
+                headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ values: [newRow] }) 
+            });
+        }
+    } catch (err) { 
+        console.error("Error updating client profile sheet:", err.message); 
+    }
+}
+
+async function addProductToSheet(product, netAmountUsd) {
+    try {
+        const prices = typeof product.price === 'string' ? JSON.parse(product.price) : product.price;
+        const jwtClient = await getJwtClient();
+        const currentRate = await getUsdBrlRate();
+        const netAmountBrl = netAmountUsd * currentRate;
+        const formattedDate = formatBrasiliaDate(new Date());
+
+        // Formatação correta de preços para a planilha
+        const priceStripeFormatted = prices.basic_stripe.replace('$', '').trim().replace('.', ',');
+        let cleanLindens = prices.basic_lindens.replace(/L\$|,/g, '').trim();
+        // Garante formato correto sem ",00" solto se já tiver vírgula
+        if (!cleanLindens.includes(',')) cleanLindens += ',00';
+
+        const rowValues = [
+            product.id, 
+            `🛒 ${product.store.toUpperCase()}`, 
+            formattedDate, 
+            product.image || '', 
+            '🟢 Disponível', 
+            'Discord', 
+            netAmountBrl.toFixed(2).replace('.', ','), 
+            priceStripeFormatted, 
+            cleanLindens, 
+            '', '', '', '', '', '', '', '', ''
+        ];
+
+        console.log(`Adding product ${product.id} to sheet...`);
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A:R:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { 
+            method: 'POST', 
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ values: [rowValues] }) 
+        });
+        console.log(`✅ Product ${product.id} added to sheet successfully.`);
+    } catch (err) { 
+        console.error("❌ Error registering product in sheet:", err.message); 
+    }
+}
+
+async function updateSaleInSheet(productId, buyerId, paymentMethod, checkoutUrl, platform = '🟣 Discord', creditsUsed = 0, totalPaid = 0) {
+    try {
+        // 1. Arquivar produto no DB
+        await pool.query('UPDATE products SET archived = TRUE WHERE id = $1', [productId]);
+
+        const jwtClient = await getJwtClient();
+        
+        // 2. Buscar dados atuais da planilha
+        const fullRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A:R`, { 
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` } 
+        });
+        const fullData = await fullRes.json();
+        const rows = fullData.values || [];
+
+        // 3. Mapear cabeçalhos para encontrar índices das colunas
+        const headers = rows[0] || [];
+        const headerMap = {};
+        headers.forEach((h, i) => { if (h) headerMap[h.trim()] = i; });
+        
+        const statusColIndex = headerMap['Status'] ?? 4;
+        const launchColIndex = headerMap['Data Lançamento'] ?? 2;
+
+        // 4. Encontrar a linha do produto (Busca case-insensitive e trim)
+        let rowIndex = -1;
+        for (let i = 1; i < rows.length; i++) {
+            if (rows[i][0] && rows[i][0].toString().trim() === productId.toString().trim()) {
+                // Verifica se ainda está disponível
+                const status = rows[i][statusColIndex] ? rows[i][statusColIndex].toString().trim() : '';
+                if (status.includes('Disponível') || status.includes('🟢')) {
+                    rowIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (rowIndex === -1) {
+            console.warn(`⚠️ Product ${productId} not found in sheet as Available. It might be already sold or ID mismatch.`);
+            // Tentativa de fallback: se não achou como disponível, verifica se existe arquivado para não duplicar, mas avisa.
+            const existsAnywhere = rows.some((r, i) => i > 0 && r[0] === productId);
+            if (!existsAnywhere) {
+                 console.error(`❌ CRITICAL: Product ${productId} does not exist in Sheet at all. Sales data will be lost in Sheet.`);
+            }
+            return;
+        }
+
+        const sheetRowIndex = rowIndex + 1; // Sheets é base 1
+        const currentRow = rows[rowIndex];
+
+        // 5. Obter dados do comprador
+        let buyerName = 'Unknown', buyerTier = '🌟 Basic';
+        try {
+            const user = await client.users.fetch(buyerId);
+            buyerName = user.username;
+            const custRes = await pool.query(`SELECT tier FROM customers WHERE user_id = $1`, [buyerId]);
+            if (custRes.rows.length > 0) buyerTier = custRes.rows[0].tier === 'premium' ? '💎 Premium' : '🌟 Basic';
+        } catch (e) {}
+
+        // 6. Calcular Tempo de Giro
+        let turnoverTime = '0h 0m';
+        const launchStr = currentRow[launchColIndex];
+        if (launchStr) {
+            const [datePart, timePart] = launchStr.split(' ');
+            if (datePart && timePart) {
+                const [d, m, y] = datePart.split('/').map(Number);
+                const [h, min, s] = timePart.split(':').map(Number);
+                const launchDate = new Date(y, m - 1, d, h, min, s);
+                const diffMs = new Date().getTime() - launchDate.getTime();
+                if (diffMs > 0) {
+                    const totalMinutes = Math.floor(diffMs / 60000); 
+                    const totalHours = Math.floor(diffMs / 3600000); 
+                    const totalDays = Math.floor(diffMs / 86400000);
+                    if (totalDays >= 1) turnoverTime = `${totalDays}d ${totalHours % 24}h`; 
+                    else if (totalHours >= 1) turnoverTime = `${totalHours}h ${totalMinutes % 60}m`; 
+                    else turnoverTime = `${totalMinutes}m`;
+                }
+            }
+        }
+
+        // 7. Definir Emoji do Método de Pagamento
+        let methodEmoji = paymentMethod;
+        if (creditsUsed > 0 && paymentMethod === 'Stripe') methodEmoji = '💳 Credits + Stripe'; 
+        else if (creditsUsed > 0 && paymentMethod === 'Lindens') methodEmoji = '💳 Credits + L$'; 
+        else if (paymentMethod === 'Credits') methodEmoji = '💳 Credits'; 
+        else if (paymentMethod === 'Stripe') methodEmoji = '💵 Stripe'; 
+        else if (paymentMethod === 'Lindens') methodEmoji = '💎 Lindens';
+
+        const saleDate = formatBrasiliaDate(new Date());
+
+        // 8. Atualizar Colunas Específicas
+        const updates = [
+            { range: `${SHEET_NAME}!E${sheetRowIndex}`, values: [['🔴 Vendido']] }, 
+            { range: `${SHEET_NAME}!J${sheetRowIndex}`, values: [[buyerName]] }, 
+            { range: `${SHEET_NAME}!K${sheetRowIndex}`, values: [[buyerId]] },
+            { range: `${SHEET_NAME}!L${sheetRowIndex}`, values: [[buyerTier]] }, 
+            { range: `${SHEET_NAME}!M${sheetRowIndex}`, values: [[totalPaid > 0 ? `$${totalPaid.toFixed(2)}` : '']] }, 
+            { range: `${SHEET_NAME}!N${sheetRowIndex}`, values: [[creditsUsed > 0 ? `$${creditsUsed.toFixed(2)}` : '']] },
+            { range: `${SHEET_NAME}!O${sheetRowIndex}`, values: [[methodEmoji]] }, 
+            { range: `${SHEET_NAME}!P${sheetRowIndex}`, values: [[saleDate]] }, 
+            { range: `${SHEET_NAME}!Q${sheetRowIndex}`, values: [[checkoutUrl || '']] }, 
+            { range: `${SHEET_NAME}!R${sheetRowIndex}`, values: [[turnoverTime]] }
+        ];
+
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, { 
+            method: 'POST', 
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ valueInputOption: 'RAW', data: updates }) 
+        });
+
+        console.log(`✅ Sale updated in Sheet for ${productId}`);
+
+        // 9. Atualizar Perfil do Cliente na outra aba
+        updateClientProfileSheet(buyerId, buyerName, buyerTier === '💎 Premium' ? 'premium' : 'basic', '', totalPaid).catch(e => {});
+
+    } catch (err) { 
+        console.error("❌ CRITICAL Error updating sale in sheet: ", err.message); 
+    }
+}
+
+async function logRefundToSheet(userId, username, store, productId, amount, method, reason, analystName = '') {
+    try {
+        const jwtClient = await getJwtClient();
+        const rowValues = [
+            formatBrasiliaDate(new Date()),
+            username,
+            userId,
+            store.toUpperCase(),
+            productId,
+            `$${amount.toFixed(2)}`,
+            method === 'credit' ? 'Store Credit' : 'Original Currency',
+            reason.substring(0, 500),
+            '⏳ Pending',
+            analystName
+        ];
+
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(REFUND_SHEET_NAME)}!A:J:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ values: [rowValues] })
+        });
+    } catch (err) {
+        console.error("❌ Error logging refund to sheet:", err.message);
+    }
+}
+
+async function updateRefundStatusInSheet(ticketId, newStatus, analystName) {
+    try {
+        const jwtClient = await getJwtClient();
+        const fullRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(REFUND_SHEET_NAME)}!A:J`, {
+            headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` }
+        });
+        const rows = (await fullRes.json()).values || [];
+        let targetRowIndex = -1;
+
+        // Busca pela última linha pendente ou pelo ID do usuário/produto se possível
+        for (let i = rows.length - 1; i >= 1; i--) {
+             if (rows[i][8] && rows[i][8].includes('Pending')) { 
+                 targetRowIndex = i + 1;
+                 break;
+             }
+        }
+
+        if (targetRowIndex !== -1) {
+            const updates = [
+                { range: `${REFUND_SHEET_NAME}!I${targetRowIndex}`, values: [[newStatus]] }, 
+                { range: `${REFUND_SHEET_NAME}!J${targetRowIndex}`, values: [[analystName]] }
+            ];
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values:batchUpdate`, { 
+                method: 'POST', 
+                headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ valueInputOption: 'RAW', data: updates }) 
+            });
+        }
+    } catch (err) { 
+        console.error("Error updating refund status in sheet: ", err.message); 
+    }
+}
 
 // ====================== CONFIGURAÇÕES MULTI-LOJA & LOGS ======================
 // Cria apenas os clientes que possuem chave válida. 
@@ -76,7 +715,7 @@ if (!stripeClients.occult) {
 
 const WEBHOOK_SECRETS = {
     occult: process.env.STRIPE_WEBHOOK_SECRET_OCCULT,
-    side: process.env.STRIPE_WEBHOOK_SECRET_SIDE || 'temp',
+    side: process.env.STRIPE_WEBHOOK_SECRET_SIDE || 'temp', // Valor temporário para não dar undefined
     occult_x_side: process.env.STRIPE_WEBHOOK_SECRET_OXS || 'temp'
 };
 
@@ -84,11 +723,7 @@ const LOG_CONFIG = {
     guildId: process.env.LOG_GUILD_ID,
     activeCategoryId: process.env.LOG_CATEGORY_ACTIVE,
     archiveCategoryId: process.env.LOG_CATEGORY_ARCHIVE,
-    storePrefixes: { 
-        occult: "1-OCC ", 
-        side: "2-SID ", 
-        occult_x_side: "3-OXS " 
-    }
+    storePrefixes: { occult: "1-OCC ", side: "2-SID ", occult_x_side: "3-OXS " }
 };
 
 const SESSION_TIMEOUT = 20 * 60 * 1000;
