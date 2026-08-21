@@ -20,7 +20,7 @@ if (!rawKey && !rawEmail) {
     console.error("🔴 CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
     process.exit(1);
 } else if (!rawKey) {
-    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
+    console.error(" CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
     process.exit(1);
 } else if (!rawEmail) {
     console.error("🔴 CRITICAL: GOOGLE_CLIENT_EMAIL is missing!");
@@ -64,12 +64,12 @@ const SERVICE_ACCOUNT_KEY = {
 // Logs de verificação absoluta
 console.log("DEBUG GOOGLE_KEY:", rawKey ? "PRESENT (Length: " + rawKey.length + ")" : "MISSING");
 console.log("🔐 AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
-console.log("🔐 KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
+console.log(" KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
 console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
 console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
 // ==============================================================================
 
-// ====================== ESTADO GLOBAL ======================
+// ====================== ESTADO GLOBAL & CONFIGURAÇÕES ======================
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 const SHOWCASE_FORUM_ID = "1512933679448457348";
