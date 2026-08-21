@@ -5,22 +5,50 @@ const Stripe = require('stripe');
 const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
+// ====================== INÍCIO BLINDADO CONTRA .ENV LOCAL ======================
+// Força o TZ antes de qualquer coisa
 process.env.TZ = 'America/Sao_Paulo';
-console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Length: " + process.env.GOOGLE_PRIVATE_KEY.length + ")" : "MISSING");
 
-// ====================== ESTADO GLOBAL ======================
-let isMaintenanceMode = false;
-const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
+// Lê DIRETAMENTE do ambiente do SO, ignorando dotenv/config()
+const GOOGLE_PRIVATE_KEY_RAW = process.env.GOOGLE_PRIVATE_KEY;
+const GOOGLE_CLIENT_EMAIL_RAW = process.env.GOOGLE_CLIENT_EMAIL;
 
-/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
-const rawKey = process.env.GOOGLE_PRIVATE_KEY;
-const rawEmail = process.env.GOOGLE_CLIENT_EMAIL_V2;
+console.log(" ENV CHECK - KEY PRESENT:", !!GOOGLE_PRIVATE_KEY_RAW);
+console.log(" ENV CHECK - EMAIL:", GOOGLE_CLIENT_EMAIL_RAW || "MISSING");
 
-if (!rawKey || !rawEmail) {
-    console.error("🔴 CRITICAL: Missing GOOGLE_PRIVATE_KEY or GOOGLE_CLIENT_EMAIL");
+if (!GOOGLE_PRIVATE_KEY_RAW || !GOOGLE_CLIENT_EMAIL_RAW) {
+    console.error("🔴 CRITICAL: Variáveis GOOGLE não encontradas no ambiente do SO.");
     process.exit(1);
 }
 
+// Normalização agressiva da chave
+let cleanKey = GOOGLE_PRIVATE_KEY_RAW
+    .replace(/\\n/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .trim();
+
+// Validação PEM
+if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
+    !cleanKey.includes('-----END PRIVATE KEY-----')) {
+    console.error("🔴 CRITICAL: Formato da chave inválido após limpeza.");
+    process.exit(1);
+}
+
+const SERVICE_ACCOUNT_KEY = {
+    client_email: GOOGLE_CLIENT_EMAIL_RAW.trim(),
+    private_key: cleanKey
+};
+
+console.log("✅ Google Auth Configured for:", SERVICE_ACCOUNT_KEY.client_email);
+// ====================== FIM DO BLOCO BLINDADO ======================
+
+const { Client, GatewayIntentBits, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AttachmentBuilder } = require("discord.js");
+const { Pool } = require('pg');
+const Stripe = require('stripe');
+const express = require('express');
+const fetch = require('node-fetch');
+const { JWT } = require('google-auth-library');
+// REMOVA A LINHA: require("dotenv").config(); <-- ELA É A CULPADA
 // Força limpeza total para eliminar qualquer caractere invisível ou cache
 let cleanKey = rawKey
     .replace(/\\n/g, '\n')   // Converte \n literais
