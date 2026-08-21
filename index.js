@@ -12,34 +12,36 @@ console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Leng
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
-const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-if (!googlePrivateKey) {
-    console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
+/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
+const rawKey = process.env.GOOGLE_PRIVATE_KEY;
+const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
+
+if (!rawKey || !rawEmail) {
+    console.error("🔴 CRITICAL: Missing GOOGLE_PRIVATE_KEY or GOOGLE_CLIENT_EMAIL");
     process.exit(1);
 }
 
-// Normalização agressiva para evitar invalid_grant na Discloud
-let normalizedKey = googlePrivateKey
-    .replace(/\\n/g, '\n')   // Converte \n literais em quebra real
-    .replace(/\r\n/g, '\n')  // Normaliza CRLF (Windows) para LF
-    .trim();                 // Remove espaços/tabs invisíveis nas extremidades
+// Força limpeza total para eliminar qualquer caractere invisível ou cache
+let cleanKey = rawKey
+    .replace(/\\n/g, '\n')   // Converte \n literais
+    .replace(/\r\n/g, '\n')  // Normaliza CRLF
+    .trim();                 // Remove espaços/tabs nas pontas
 
-// Validação de integridade antes de usar
-if (!normalizedKey.includes('-----BEGIN PRIVATE KEY-----') || 
-    !normalizedKey.includes('-----END PRIVATE KEY-----')) {
-    console.error("🔴 CRITICAL ERROR: GOOGLE_PRIVATE_KEY is corrupted or incomplete.");
+// Validação de integridade PEM
+if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
+    !cleanKey.includes('-----END PRIVATE KEY-----')) {
+    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted.");
     process.exit(1);
 }
 
 const SERVICE_ACCOUNT_KEY = {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: normalizedKey
+    client_email: rawEmail.trim(), // Garante que não há espaços no email
+    private_key: cleanKey
 };
 
-console.log("FORCE CHECK EMAIL:", process.env.GOOGLE_CLIENT_EMAIL);
-console.log("DEBUG EMAIL USED:", SERVICE_ACCOUNT_KEY.client_email);
-console.log("DEBUG KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
+// LOG DE VERIFICAÇÃO ABSOLUTA (Mantenha até resolver)
+console.log("🔐 AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
+console.log("🔐 KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
 // ==============================================================================
 
 // Logs de debug para verificar se a chave foi formatada corretamente
