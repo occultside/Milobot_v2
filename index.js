@@ -1348,15 +1348,16 @@ async function reopenEditMenu(source, wizard, prodId) {
             { name: "📥 Download", value: product.file_download ? `[Link](${product.file_download})` : 'N/A', inline: false }
         ).setColor(0xf39c12);
 
-    const components = [
+        const components = [
         new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`edit_action_portfolio_${prodId.replace(/ /g, '_')}`).setLabel("🖼️ Send to Portfolio").setStyle(ButtonStyle.Primary), // <--- NOVO BOTÃO ADICIONADO AQUI
             new ButtonBuilder().setCustomId(`edit_action_price_${prodId.replace(/ /g, '_')}`).setLabel("💰 Alterar Preço").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId(`edit_action_image_${prodId.replace(/ /g, '_')}`).setLabel("🖼️ Alterar Imagem").setStyle(ButtonStyle.Secondary), 
-            new ButtonBuilder().setCustomId(`edit_action_download_${prodId.replace(/ /g, '_')}`).setLabel("📥 Alterar Download").setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId(`edit_action_download_${prodId.replace(/ /g, '_')}`).setLabel(" Alterar Download").setStyle(ButtonStyle.Secondary)
         ), 
         new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`edit_action_archive_${prodId.replace(/ /g, '_')}`).setLabel(product.archived ? "📦 Desarquivar" : "🗄️ Arquivar").setStyle(ButtonStyle.Danger), 
-            new ButtonBuilder().setCustomId(`edit_action_delete_${prodId.replace(/ /g, '_')}`).setLabel("🗑️ Excluir Produto").setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`edit_action_delete_${prodId.replace(/ /g, '_')}`).setLabel("️ Excluir Produto").setStyle(ButtonStyle.Danger)
         ), 
         new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("edit_back_to_list").setLabel("🔙 Ver Outros Produtos").setStyle(ButtonStyle.Secondary)
@@ -2030,7 +2031,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const parts = interaction.customId.split("_"); 
             const action = parts[2]; 
             const prodId = parts.slice(3).join("_").replace(/_/g, ' ');
-            
+            // NOVA AÇÃO: SEND TO PORTFOLIO
+if (action === "portfolio") {
+    const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [prodId])).rows[0];
+    if (!product) return interaction.editReply({ content: "❌ Produto não encontrado." });
+    
+    try {
+        await sendToPortfolio(product, "admin_manual");
+        await interaction.editReply({ content: `🖼️ Produto **${prodId}** enviado para o Portfólio com sucesso!`, components: [] });
+        return reopenEditMenu(interaction, w, prodId);
+    } catch (err) {
+        return interaction.editReply({ content: `❌ Erro ao enviar para portfólio: ${err.message}` });
+    }
+}
             if (action === "archive") { 
                 const newStatus = !w.productData.archived; 
                 await pool.query(`UPDATE products SET archived = $1 WHERE id = $2`, [newStatus, prodId]); 
