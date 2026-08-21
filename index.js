@@ -1187,25 +1187,41 @@ async function getActiveQueueCount(productId) {
 }
 
 async function checkAndReserveProduct(userId, productId, store, durationMinutes = 10) {
+    const client = await pool.connect();
     try {
-        await pool.query(`UPDATE product_reservations SET status = 'EXPIRED' WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, [productId]);
+        await client.query('BEGIN');
         
-        const result = await pool.query(`SELECT reserve_product($1, $2, $3, $4) as reservation_result`, [userId, productId, store, durationMinutes]);
-        if (!result?.rows?.length) return { success: false, message: "Database error during reservation." };
-        if (!result.rows[0].reservation_result.success) return { success: false, message: result.rows[0].reservation_result.message };
+        // 1. Limpa expirados primeiro dentro da transação
+        await client.query(`UPDATE product_reservations SET status = 'EXPIRED' WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, [productId]);
         
+        // 2. Verifica se já existe alguém ativo AGORA (com lock para evitar race condition)
+        const activeCheck = await client.query(
+            `SELECT * FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() FOR UPDATE SKIP LOCKED`, 
+            [productId]
+        );
+
+        if (activeCheck.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return { success: false, message: "Product is currently reserved by another user." };
+        }
+
+        // 3. Se estiver livre, cria a reserva
+        await client.query(
+            `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`, 
+            [userId, productId, store, durationMinutes]
+        );
+        
+        await client.query('COMMIT');
         return { success: true };
+
     } catch (err) {
-        try {
-            if (parseInt((await pool.query(`SELECT count(*) as count FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`, [productId])).rows[0].count) === 0) {
-                await pool.query(`INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`, [userId, productId, store, durationMinutes]);
-                return { success: true };
-            }
-        } catch(e){}
+        await client.query('ROLLBACK');
+        console.error("Reservation error:", err);
         return { success: false, message: "System error during reservation." };
+    } finally {
+        client.release();
     }
 }
-
 async function notifyNextInQueue(productId, store) {
     const nextUser = await pool.query(`SELECT user_id FROM queue_notifications WHERE product_id = $1 AND notified = FALSE LIMIT 1`, [productId]);
     if (nextUser.rows.length > 0) {
@@ -2481,7 +2497,7 @@ if (action === "portfolio") {
             }); 
         }
 
-        if (interaction.isButton() && interaction.customId === "payment_method") {
+       if (interaction.isButton() && interaction.customId === "payment_method") {
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     const s = clientSession[interaction.user.id];
     if (!s?.product) return interaction.editReply({ content: "❌ Session expired.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
@@ -2490,24 +2506,23 @@ if (action === "portfolio") {
     const blockedStores = customer.blocked_stores || [];
     if (blockedStores.includes(s.product.store)) return interaction.editReply({ content: `🚫 **Access Denied**\nYou are currently blocked from purchasing in the **${s.product.store.toUpperCase()}** store.\nPlease contact support for more information.`, components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`contact_support_${s.product.store}`).setLabel("💬 Contact Support").setStyle(ButtonStyle.Primary))] });
 
-    // --- NOVA VERIFICAÇÃO: JÁ ESTÁ NA FILA OU TEM RESERVA? ---
+    // --- VERIFICAÇÃO DE DUPLICIDADE NA FILA/RESERVA ---
     const existingReservation = await pool.query(`SELECT * FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`, [interaction.user.id, s.product.id]);
     const existingQueue = await pool.query(`SELECT * FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [interaction.user.id, s.product.id]);
 
     if (existingReservation.rows.length > 0) {
         return interaction.editReply({ 
-            content: `⚠️ **Você já tem este produto reservado!**\nVocê está na posição **#1** e tem até <t:${Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000)}:R> para finalizar o pagamento.`,
+            content: `⚠️ **You already have this product reserved!**\nYou are in position **#1** and have until <t:${Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000)}:R> to finalize payment.`,
             components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary))]
         });
     }
 
     if (existingQueue.rows.length > 0) {
-        // Pega a posição real dele na fila
         const posRes = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [interaction.user.id, s.product.id]);
         const pos = posRes.rows.length > 0 ? posRes.rows[0].posicao : '?';
         
         return interaction.editReply({ 
-            content: `⚠️ **Você já está na fila deste produto!**\nSua posição atual é **#${pos}**. Aguarde sua vez ser chamada via DM.`,
+            content: `⚠️ **You are already in the queue for this product!**\nYour current position is **#${pos}**. Please wait for your turn to be called via DM.`,
             components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary))]
         });
     }
@@ -2515,16 +2530,21 @@ if (action === "portfolio") {
 
     await registerInteraction(interaction.user.id, s.product.id, s.product.store);
     const reservation = await checkAndReserveProduct(interaction.user.id, s.product.id, s.product.store, 10);
+    
     let position, waitTime;
     if (reservation.success) {
         position = 1; waitTime = 0;
         s.step = "waiting_for_payment_method";
         startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
         await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
-        await interaction.editReply({ content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n⏰ Expires at: <t:${Math.floor((Date.now() + 10 * 60 * 1000) / 1000)}:R>` });
+        
+        await interaction.editReply({ 
+            content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n⏰ Expires at: <t:${Math.floor((Date.now() + 10 * 60 * 1000) / 1000)}:R>` 
+        });
+        
         await notifyFullQueue(s.product.id, s.product.store);
         
-        // ... (Restante do código de cálculo de preço e botões de pagamento permanece igual) ...
+        // ... (Mantenha o restante do código de cálculo de preço e botões aqui) ...
         const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
         const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price;
         let priceStripeRaw = isPremium ? parseFloat(prices.premium_stripe.replace('$', '')) : parseFloat(prices.basic_stripe.replace('$', ''));
@@ -2573,10 +2593,8 @@ if (action === "portfolio") {
         if (interaction.isButton() && interaction.customId.startsWith("notify_me_")) {
     const prodId = interaction.customId.replace("notify_me_", "").replace(/_/g, ' ');
     
-    // Verifica se já está na fila
+    // Verifica se já está na fila ou tem reserva
     const inQueue = await pool.query(`SELECT * FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [interaction.user.id, prodId]);
-    
-    // Verifica se tem reserva ativa (está em #1)
     const hasReservation = await pool.query(`SELECT * FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`, [interaction.user.id, prodId]);
 
     if (inQueue.rows.length > 0 || hasReservation.rows.length > 0) {
@@ -2584,7 +2602,7 @@ if (action === "portfolio") {
         const pos = posRes.rows.length > 0 ? posRes.rows[0].posicao : (hasReservation.rows.length > 0 ? 1 : '?');
         
         return interaction.reply({ 
-            content: `ℹ️ **Você já está na fila!**\nSua posição atual é **#${pos}**. Você será notificado automaticamente quando for sua vez.`, 
+            content: `ℹ️ **You are already in the queue!**\nYour current position is **#${pos}**. You will be notified automatically when it's your turn.`, 
             flags: [MessageFlags.Ephemeral] 
         });
     }
