@@ -6,14 +6,13 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
 // ====================== INÍCIO BLINDADO CONTRA .ENV LOCAL ======================
-// Força o TZ antes de qualquer coisa
 process.env.TZ = 'America/Sao_Paulo';
 
-// Lê DIRETAMENTE do ambiente do SO, ignorando dotenv/config()
+// Lê DIRETAMENTE do ambiente do SO, ignorando dotenv/config() se houver conflito
 const GOOGLE_PRIVATE_KEY_RAW = process.env.GOOGLE_PRIVATE_KEY;
 const GOOGLE_CLIENT_EMAIL_RAW = process.env.GOOGLE_CLIENT_EMAIL;
 
-console.log(" ENV CHECK - KEY PRESENT:", !!GOOGLE_PRIVATE_KEY_RAW);
+console.log("🔐 ENV CHECK - KEY PRESENT:", !!GOOGLE_PRIVATE_KEY_RAW);
 console.log(" ENV CHECK - EMAIL:", GOOGLE_CLIENT_EMAIL_RAW || "MISSING");
 
 if (!GOOGLE_PRIVATE_KEY_RAW || !GOOGLE_CLIENT_EMAIL_RAW) {
@@ -21,16 +20,16 @@ if (!GOOGLE_PRIVATE_KEY_RAW || !GOOGLE_CLIENT_EMAIL_RAW) {
     process.exit(1);
 }
 
-// Normalização agressiva da chave
+// Normalização agressiva da chave para evitar invalid_grant
 let cleanKey = GOOGLE_PRIVATE_KEY_RAW
-    .replace(/\\n/g, '\n')
-    .replace(/\r\n/g, '\n')
-    .trim();
+    .replace(/\\n/g, '\n')   // Converte \n literais em quebra real
+    .replace(/\r\n/g, '\n')  // Normaliza CRLF (Windows) para LF
+    .trim();                 // Remove espaços/tabs invisíveis nas pontas
 
-// Validação PEM
+// Validação PEM explícita
 if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
     !cleanKey.includes('-----END PRIVATE KEY-----')) {
-    console.error("🔴 CRITICAL: Formato da chave inválido após limpeza.");
+    console.error(" CRITICAL: Formato da chave inválido após limpeza.");
     process.exit(1);
 }
 
@@ -40,8 +39,11 @@ const SERVICE_ACCOUNT_KEY = {
 };
 
 console.log("✅ Google Auth Configured for:", SERVICE_ACCOUNT_KEY.client_email);
+console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
+console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
 // ====================== FIM DO BLOCO BLINDADO ======================
 
+// IMPORTAÇÕES (Agora seguras, pois estão APÓS a configuração das variáveis)
 const { Client, GatewayIntentBits, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AttachmentBuilder } = require("discord.js");
 const { Pool } = require('pg');
 const Stripe = require('stripe');
