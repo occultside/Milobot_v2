@@ -14,7 +14,7 @@ const DEV_IDS = ["721614093269729292", "971051392456331324", "135614012986517522
 
 /// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO) ======================
 const rawKey = process.env.GOOGLE_PRIVATE_KEY;
-const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
+const rawEmail = process.env.GOOGLE_CLIENT_EMAIL_V2;
 
 if (!rawKey || !rawEmail) {
     console.error("🔴 CRITICAL: Missing GOOGLE_PRIVATE_KEY or GOOGLE_CLIENT_EMAIL");
