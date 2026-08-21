@@ -672,16 +672,28 @@ async function updateRefundStatusInSheet(ticketId, newStatus, analystName) {
 }
 
 // ====================== CONFIGURAÇÕES MULTI-LOJA & LOGS ======================
+// Cria apenas os clientes que possuem chave válida. 
+// Se a chave não existir, usa null para não travar o boot do bot.
 const stripeClients = {
-    occult: new Stripe(process.env.STRIPE_SECRET_KEY_OCCULT),
-    side: new Stripe(process.env.STRIPE_SECRET_KEY_SIDE),
-    occult_x_side: new Stripe(process.env.STRIPE_SECRET_KEY_OXS)
+    occult: process.env.STRIPE_SECRET_KEY_OCCULT ? new Stripe(process.env.STRIPE_SECRET_KEY_OCCULT) : null,
+    side: process.env.STRIPE_SECRET_KEY_SIDE ? new Stripe(process.env.STRIPE_SECRET_KEY_SIDE) : null,
+    occult_x_side: process.env.STRIPE_SECRET_KEY_OXS ? new Stripe(process.env.STRIPE_SECRET_KEY_OXS) : null
 };
+
+// Verifica se pelo menos a loja principal está ativa
+if (!stripeClients.occult) {
+    console.error("🔴 CRITICAL: STRIPE_SECRET_KEY_OCCULT is missing. Bot cannot start.");
+    process.exit(1);
+} else {
+    console.log("✅ Stripe Client initialized for: OCCULT");
+    if (stripeClients.side) console.log("✅ Stripe Client initialized for: SIDE");
+    if (stripeClients.occult_x_side) console.log("✅ Stripe Client initialized for: OCCULTSIDE");
+}
 
 const WEBHOOK_SECRETS = {
     occult: process.env.STRIPE_WEBHOOK_SECRET_OCCULT,
-    side: process.env.STRIPE_WEBHOOK_SECRET_SIDE,
-    occult_x_side: process.env.STRIPE_WEBHOOK_SECRET_OXS
+    side: process.env.STRIPE_WEBHOOK_SECRET_SIDE || 'temp', // Valor temporário para não dar undefined
+    occult_x_side: process.env.STRIPE_WEBHOOK_SECRET_OXS || 'temp'
 };
 
 const LOG_CONFIG = {
