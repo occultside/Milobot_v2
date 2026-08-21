@@ -12,28 +12,29 @@ console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Leng
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-/// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
+// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
 const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 if (!googlePrivateKey) {
     console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
     process.exit(1);
 }
 
-// Limpeza agressiva para evitar invalid_grant
-let cleanKey = googlePrivateKey
-    .replace(/\\n/g, '\n')       // Converte \n literais em quebra real
-    .replace(/\r\n/g, '\n')      // Normaliza Windows CRLF para LF
-    .trim();                     // Remove espaços invisíveis no início/fim
+// Normalização agressiva para evitar invalid_grant na Discloud
+let normalizedKey = googlePrivateKey
+    .replace(/\\n/g, '\n')   // Converte \n literais em quebra real
+    .replace(/\r\n/g, '\n')  // Normaliza CRLF (Windows) para LF
+    .trim();                 // Remove espaços/tabs invisíveis nas extremidades
 
-// Verificação extra: garante que a chave tem o formato PEM válido
-if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || !cleanKey.includes('-----END PRIVATE KEY-----')) {
-    console.error("🔴 CRITICAL ERROR: GOOGLE_PRIVATE_KEY format is corrupted.");
+// Validação de integridade antes de usar
+if (!normalizedKey.includes('-----BEGIN PRIVATE KEY-----') || 
+    !normalizedKey.includes('-----END PRIVATE KEY-----')) {
+    console.error("🔴 CRITICAL ERROR: GOOGLE_PRIVATE_KEY is corrupted or incomplete.");
     process.exit(1);
 }
 
 const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: cleanKey
+    private_key: normalizedKey
 };
 // ==============================================================================
 
