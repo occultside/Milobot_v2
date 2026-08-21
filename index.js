@@ -36,6 +36,9 @@ const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
     private_key: normalizedKey
 };
+
+console.log("DEBUG EMAIL USED:", SERVICE_ACCOUNT_KEY.client_email);
+console.log("DEBUG KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
 // ==============================================================================
 
 // Logs de debug para verificar se a chave foi formatada corretamente
