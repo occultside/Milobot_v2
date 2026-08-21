@@ -1,11 +1,3 @@
-Aqui está o código completo do `index.js` com todas as correções aplicadas e **sem nenhuma alteração fora do escopo solicitado**:
-
-1.  ✅ **Bloco de Validação Stripe** adicionado logo após `process.env.TZ`.
-2.  ✅ **Sintaxe Arrow Functions corrigida** (`=>` sem espaços) na inicialização do banco de dados.
-3.  ✅ **Log de Debug Stripe** mantido no catch do botão `pay_stripe`.
-4.  ✅ **Tradução da Fila** ("minutes") mantida.
-
-```javascript
 require("dotenv").config();
 const { Client, GatewayIntentBits, Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, AttachmentBuilder } = require("discord.js");
 const { Pool } = require('pg');
@@ -3102,4 +3094,3 @@ if (!product) return;
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Webhook server on port ${PORT}`));
 client.login(process.env.DISCORD_TOKEN);
-```
