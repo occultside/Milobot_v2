@@ -12,25 +12,28 @@ console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Leng
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
+/// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
 const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 if (!googlePrivateKey) {
-    console.error(" CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
+    console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
     process.exit(1);
 }
 
-// Normaliza a chave para funcionar tanto com \n literais quanto com quebras reais
-let normalizedKey = googlePrivateKey;
-// Se NÃO contém quebra de linha real, assume que são \n literais e converte
-if (!normalizedKey.includes('\n')) {
-    normalizedKey = normalizedKey.replace(/\\n/g, '\n');
+// Limpeza agressiva para evitar invalid_grant
+let cleanKey = googlePrivateKey
+    .replace(/\\n/g, '\n')       // Converte \n literais em quebra real
+    .replace(/\r\n/g, '\n')      // Normaliza Windows CRLF para LF
+    .trim();                     // Remove espaços invisíveis no início/fim
+
+// Verificação extra: garante que a chave tem o formato PEM válido
+if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || !cleanKey.includes('-----END PRIVATE KEY-----')) {
+    console.error("🔴 CRITICAL ERROR: GOOGLE_PRIVATE_KEY format is corrupted.");
+    process.exit(1);
 }
-// Remove espaços invisíveis nas extremidades que quebram a assinatura JWT
-normalizedKey = normalizedKey.trim();
 
 const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: normalizedKey
+    private_key: cleanKey
 };
 // ==============================================================================
 
