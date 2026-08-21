@@ -37,6 +37,7 @@ const SERVICE_ACCOUNT_KEY = {
     private_key: normalizedKey
 };
 
+console.log("FORCE CHECK EMAIL:", process.env.GOOGLE_CLIENT_EMAIL);
 console.log("DEBUG EMAIL USED:", SERVICE_ACCOUNT_KEY.client_email);
 console.log("DEBUG KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
 // ==============================================================================
