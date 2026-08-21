@@ -11,14 +11,17 @@ process.env.TZ = 'America/Sao_Paulo';
 let isMaintenanceMode = false;
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 
-// ====================== CONFIGURAÇÕES ======================
-const SPREADSHEET_ID = '1XqaVaFyxDfFcGyk3-B_0WS9juAAH72ujP-Z0vsCxLHQ';
-const SHEET_NAME = '📊 Vendas & Estoque';
-const REFUND_SHEET_NAME = '🎫 Reembolsos & Suporte';
-const CLIENT_PROFILE_SHEET = '👥 Perfil dos Clientes';
+// ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
+const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+if (!googlePrivateKey) {
+    console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
+    console.error("Bot cannot start without valid Google Sheets credentials.");
+    process.exit(1); // Para o bot com mensagem clara em vez de crashar feio
+}
+
 const SERVICE_ACCOUNT_KEY = {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    private_key: googlePrivateKey.replace(/\\n/g, '\n') // Substitui \n literal por quebra de linha real
 };
 const SHOWCASE_FORUM_ID = "1512933679448457348";
 const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
