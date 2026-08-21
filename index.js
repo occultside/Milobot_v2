@@ -6,32 +6,33 @@ const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
 process.env.TZ = 'America/Sao_Paulo';
-console.log("DEBUG GOOGLE_KEY:", process.env.GOOGLE_PRIVATE_KEY ? "PRESENT (Length: " + process.env.GOOGLE_PRIVATE_KEY.length + ")" : "MISSING");
 
-// ====================== ESTADO GLOBAL ======================
-let isMaintenanceMode = false;
-const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
-
-/// ====================== CONFIGURAÇÕES GOOGLE SHEETS (BLINDADO E RECONSTRUIDO) ======================
+// ====================== BLINDAGEM DE VARIÁVEIS AMBIENTAIS ======================
 const rawKey = process.env.GOOGLE_PRIVATE_KEY;
 const rawEmail = process.env.GOOGLE_CLIENT_EMAIL;
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = process.env.SHEET_NAME || "Vendas";
+const CLIENT_PROFILE_SHEET = process.env.CLIENT_PROFILE_SHEET || "Clientes";
+const REFUND_SHEET_NAME = process.env.REFUND_SHEET_NAME || "Reembolsos";
 
-// DIAGNÓSTICO PRECISO: Identifica qual das duas está faltando
+// Diagnóstico preciso de variáveis faltantes
 if (!rawKey && !rawEmail) {
-    console.error(" CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
-    console.error("💡 Tip: Check Discloud Env Variables panel and force Restart.");
+    console.error("🔴 CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
     process.exit(1);
 } else if (!rawKey) {
     console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
-    console.error("   Found Email:", rawEmail?.substring(0, 20) + "...");
     process.exit(1);
 } else if (!rawEmail) {
     console.error("🔴 CRITICAL: GOOGLE_CLIENT_EMAIL is missing!");
-    console.error("   Key Length:", rawKey.length);
     process.exit(1);
 }
 
-// Força limpeza total e reconstrução segura do PEM para evitar erro DECODER routines::unsupported
+if (!SPREADSHEET_ID) {
+    console.error("🔴 CRITICAL: SPREADSHEET_ID is missing from environment variables!");
+    process.exit(1);
+}
+
+// Reconstrução forçada do PEM para evitar erro DECODER routines::unsupported
 let cleanKey = rawKey
     .replace(/\\n/g, '\n')          // Converte \n literais vindos de JSON/env
     .replace(/\r\n/g, '\n')         // Normaliza CRLF
@@ -50,20 +51,58 @@ cleanKey = '-----BEGIN PRIVATE KEY-----\n' +
 // Validação de integridade PEM
 if (!cleanKey.includes('-----BEGIN PRIVATE KEY-----') || 
     !cleanKey.includes('-----END PRIVATE KEY-----')) {
-    console.error(" CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted after reconstruction.");
+    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY format is corrupted after reconstruction.");
     console.error("   Start:", cleanKey.substring(0, 30));
     process.exit(1);
 }
 
 const SERVICE_ACCOUNT_KEY = {
-    client_email: rawEmail.trim(), // Garante que não há espaços no email
+    client_email: rawEmail.trim(),
     private_key: cleanKey
 };
 
-// LOG DE VERIFICAÇÃO ABSOLUTA (Mantenha até resolver)
+// Logs de verificação absoluta
+console.log("DEBUG GOOGLE_KEY:", rawKey ? "PRESENT (Length: " + rawKey.length + ")" : "MISSING");
 console.log("🔐 AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
 console.log("🔐 KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
+console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
+console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
 // ==============================================================================
+
+// ====================== ESTADO GLOBAL ======================
+let isMaintenanceMode = false;
+const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
+const SHOWCASE_FORUM_ID = "1512933679448457348";
+const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
+const ID_MICSCARR = "721614093269729292";
+const ID_POLYPIE = "971051392456331324";
+const ID_OCCULTSIDE_OFFICIAL = "1356140129865175221";
+
+// Cache de cotação USD com fallback seguro
+let usdBrlCache = { rate: null, timestamp: 0 };
+const CACHE_DURATION = 5 * 60 * 1000;
+
+async function getUsdBrlRate() {
+    try {
+        const now = Date.now();
+        if (usdBrlCache.rate && (now - usdBrlCache.timestamp) < CACHE_DURATION) return usdBrlCache.rate;
+        
+        const response = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL');
+        const data = await response.json();
+        
+        // Verifica se a propriedade USDBRL existe antes de acessar .bid
+        if (!data.USDBRL || !data.USDBRL.bid) {
+            throw new Error("API returned invalid structure");
+        }
+        
+        const rate = parseFloat(data.USDBRL.bid);
+        usdBrlCache = { rate, timestamp: now };
+        return rate;
+    } catch (err) {
+        console.error("Erro ao buscar cotação USD:", err.message);
+        return usdBrlCache.rate || 5.40; 
+    }
+}
 
 // Logs de debug para verificar se a chave foi formatada corretamente
 console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
