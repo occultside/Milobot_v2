@@ -17,18 +17,18 @@ const REFUND_SHEET_NAME = process.env.REFUND_SHEET_NAME || "Reembolsos";
 
 // Diagnóstico preciso de variáveis faltantes
 if (!rawKey && !rawEmail) {
-    console.error("🔴 CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
+    console.error(" CRITICAL: BOTH GOOGLE_PRIVATE_KEY and GOOGLE_CLIENT_EMAIL are missing!");
     process.exit(1);
 } else if (!rawKey) {
-    console.error(" CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
+    console.error("🔴 CRITICAL: GOOGLE_PRIVATE_KEY is missing!");
     process.exit(1);
 } else if (!rawEmail) {
-    console.error("🔴 CRITICAL: GOOGLE_CLIENT_EMAIL is missing!");
+    console.error(" CRITICAL: GOOGLE_CLIENT_EMAIL is missing!");
     process.exit(1);
 }
 
 if (!SPREADSHEET_ID) {
-    console.error("🔴 CRITICAL: SPREADSHEET_ID is missing from environment variables!");
+    console.error(" CRITICAL: SPREADSHEET_ID is missing from environment variables!");
     process.exit(1);
 }
 
@@ -63,8 +63,8 @@ const SERVICE_ACCOUNT_KEY = {
 
 // Logs de verificação absoluta
 console.log("DEBUG GOOGLE_KEY:", rawKey ? "PRESENT (Length: " + rawKey.length + ")" : "MISSING");
-console.log("🔐 AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
-console.log(" KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
+console.log(" AUTH EMAIL:", SERVICE_ACCOUNT_KEY.client_email);
+console.log("🔐 KEY LENGTH:", SERVICE_ACCOUNT_KEY.private_key.length);
 console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
 console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
 // ==============================================================================
@@ -101,34 +101,6 @@ async function getUsdBrlRate() {
     } catch (err) {
         console.error("Erro ao buscar cotação USD:", err.message);
         return usdBrlCache.rate || 5.40; 
-    }
-}
-
-// Logs de debug para verificar se a chave foi formatada corretamente
-console.log("DEBUG KEY START:", SERVICE_ACCOUNT_KEY.private_key.substring(0, 30));
-console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_ACCOUNT_KEY.private_key.length - 30));
-
-const SHOWCASE_FORUM_ID = "1512933679448457348";
-const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
-const ID_MICSCARR = "721614093269729292";
-const ID_POLYPIE = "971051392456331324";
-const ID_OCCULTSIDE_OFFICIAL = "1356140129865175221";
-
-let usdBrlCache = { rate: null, timestamp: 0 };
-const CACHE_DURATION = 5 * 60 * 1000;
-
-async function getUsdBrlRate() {
-    try {
-        const now = Date.now();
-        if (usdBrlCache.rate && (now - usdBrlCache.timestamp) < CACHE_DURATION) return usdBrlCache.rate;
-        const response = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL');
-        const data = await response.json();
-        const rate = parseFloat(data.USDBRL.bid);
-        usdBrlCache = { rate, timestamp: now };
-        return rate;
-    } catch (err) {
-        console.error("Erro ao buscar cotação USD:", err.message);
-        return usdBrlCache.rate || 5.0;
     }
 }
 
