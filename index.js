@@ -15,17 +15,17 @@ const DEV_IDS = ["721614093269729292", "971051392456331324", "135614012986517522
 // ====================== CONFIGURAÇÕES GOOGLE SHEETS ======================
 const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 if (!googlePrivateKey) {
-    console.error("🔴 CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
+    console.error(" CRITICAL STARTUP ERROR: Missing environment variable GOOGLE_PRIVATE_KEY");
     process.exit(1);
 }
 
-// Normaliza a chave para garantir formato correto independente de como foi injetada
+// Normaliza a chave para funcionar tanto com \n literais quanto com quebras reais
 let normalizedKey = googlePrivateKey;
-// Se a chave NÃO contém quebras de linha reais, assume que \n são literais e converte
+// Se NÃO contém quebra de linha real, assume que são \n literais e converte
 if (!normalizedKey.includes('\n')) {
     normalizedKey = normalizedKey.replace(/\\n/g, '\n');
 }
-// Remove espaços invisíveis nas extremidades que podem quebrar a assinatura
+// Remove espaços invisíveis nas extremidades que quebram a assinatura JWT
 normalizedKey = normalizedKey.trim();
 
 const SERVICE_ACCOUNT_KEY = {
