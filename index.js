@@ -1130,10 +1130,13 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // 1. Remove da fila quem acabou de conseguir a reserva ativa
-        await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (SELECT user_id FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW())`, [productId]);
+        // Remove da fila quem JÁ TEM reserva ativa (evita envio duplicado)
+        await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (
+            SELECT user_id FROM product_reservations 
+            WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
+        )`, [productId]);
 
-        // 2. Pega apenas quem REALMENTE está na fila (sem reserva ativa)
+        // Pega apenas quem REALMENTE está esperando
         const queueUsers = await pool.query(
             `SELECT user_id FROM queue_notifications
              WHERE product_id = $1 AND user_id NOT IN (
@@ -1152,9 +1155,9 @@ async function notifyFullQueue(productId, store) {
                 const user = await client.users.fetch(row.user_id);
                 const pos = info.rows[0].posicao;
                 
-                // CORREÇÃO DO CÁLCULO DE TEMPO:
-                // Subtrai 10 minutos (tempo do #1) para cada posição após a primeira
-                // Se for #2, espera ~10min. Se for #3, espera ~20min, etc.
+                // CORREÇÃO DE CÁLCULO: 
+                // Se for #2, espera ~10min (tempo do #1). Se for #3, espera ~20min, etc.
+                // A função get_user_queue_info deve retornar isso, mas garantimos aqui:
                 const wait = Math.max(0, (pos - 1) * 10); 
 
                 const msg = pos === 1
@@ -1166,7 +1169,6 @@ async function notifyFullQueue(productId, store) {
         }
     } catch (err) { console.error("Erro crítico na notificação da fila:", err); }
 }
-
 async function clearQueueAndNotifyBought(productId, store) {
     try {
         const queueRes = await pool.query(`SELECT user_id FROM queue_notifications WHERE product_id = $1`, [productId]);
@@ -1213,14 +1215,14 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
     try {
         await client.query('BEGIN');
         
-        // 1. Limpa expirados dentro da transação
+        // Limpa expirados usando o NOW() do banco para garantir precisão
         await client.query(
             `UPDATE product_reservations SET status = 'EXPIRED'
              WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`,
             [productId]
         );
 
-        // 2. Verifica se existe reserva ativa COM LOCK
+        // Verifica concorrência com LOCK
         const activeCheck = await client.query(
             `SELECT * FROM product_reservations
              WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
@@ -1230,10 +1232,10 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
 
         if (activeCheck.rows.length > 0) {
             await client.query('ROLLBACK');
-            return { success: false, message: "Product is currently reserved by another user." };
+            return { success: false, message: "Product is currently reserved." };
         }
 
-        // 3. Cria a reserva usando o NOW() do banco para garantir precisão
+        // Cria a reserva baseada EXCLUSIVAMENTE no relógio do banco de dados
         await client.query(
             `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status)
              VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`,
@@ -1242,9 +1244,11 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
 
         await client.query('COMMIT');
 
-        // Retorna o expires_at real do banco para sincronizar a mensagem
+        // Busca o expires_at real criado pelo banco para evitar dessincronização de fuso
         const newRes = await pool.query(
-            `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
+            `SELECT expires_at FROM product_reservations 
+             WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE' 
+             ORDER BY reserved_at DESC LIMIT 1`,
             [userId, productId]
         );
 
@@ -1260,6 +1264,7 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
         client.release();
     }
 }
+
 async function notifyNextInQueue(productId, store) {
     const client = await pool.connect();
     try {
