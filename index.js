@@ -2573,6 +2573,10 @@ if (action === "portfolio") {
         position = 1; waitTime = 0;
         s.step = "waiting_for_payment_method";
         startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
+
+        await pool.query(`DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [interaction.user.id, s.product.id]);
+    
+    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id,
         await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
         
         await interaction.editReply({ 
