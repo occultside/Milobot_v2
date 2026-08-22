@@ -1130,7 +1130,7 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // 1. Remove da fila quem acabou de conseguir a reserva (para evitar mensagem duplicada)
+        // 1. Remove da fila quem acabou de conseguir a reserva ativa
         await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (SELECT user_id FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW())`, [productId]);
 
         // 2. Pega apenas quem REALMENTE está na fila (sem reserva ativa)
@@ -1324,9 +1324,9 @@ async function notifyNextInQueue(productId, store) {
             const expiresTs = resInfo.rows[0] ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
             await dm.send({
-                content: ` **Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\n\nClick below to proceed:`,
+                content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\n\nClick below to proceed:`,
                 components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`queue_claim_${productId.replace(/ /g, '_')}`).setLabel(" Complete Purchase Now").setStyle(ButtonStyle.Success)
+                    new ButtonBuilder().setCustomId(`queue_claim_${productId.replace(/ /g, '_')}`).setLabel("Complete Purchase Now").setStyle(ButtonStyle.Success)
                 )]
             });
         } catch (e) { console.error("Erro ao enviar DM de liberação:", e); }
@@ -2609,7 +2609,7 @@ if (action === "portfolio") {
             const expiresTs = Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000);
             return interaction.editReply({ 
                 content: `⚠️ **You already have this product reserved!**\nYou are in position **#1** and have until <t:${expiresTs}:R> to finalize payment.`,
-                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary))]
+                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Browse other products").setStyle(ButtonStyle.Secondary))]
             });
         }
 
@@ -2631,20 +2631,21 @@ if (action === "portfolio") {
         
         let position, waitTime;
         if (reservation.success) {
-            position = 1; waitTime = 0;
-            s.step = "waiting_for_payment_method";
-            startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
-            
-            // Remove da fila imediatamente após conseguir a reserva
-            await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
-            
-            await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
-            
+    position = 1; waitTime = 0;
+    s.step = "waiting_for_payment_method";
+    startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
+    
+    // ADICIONE ESTA LINHA: Remove o usuário da fila assim que ele pega a reserva
+    await pool.query(`DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [interaction.user.id, s.product.id]);
+    
+    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
+    // ... restante do código ...
+}
             // Usa o expiresAt retornado pela função atômica (sincronizado com o DB)
             const expiresTs = reservation.expiresAt ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
             await interaction.editReply({ 
-                content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n Expires at: <t:${expiresTs}:R>` 
+                content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n⏰ Expires at: <t:${expiresTs}:R>` 
             });
             
             await notifyFullQueue(s.product.id, s.product.store);
@@ -2694,10 +2695,10 @@ if (action === "portfolio") {
             await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position, waitTime });
             
             return interaction.editReply({
-                content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
+                content: `📋 **Queue Position: #${position}**\n Estimated release in **~${waitTime} min**.`,
                 components: [new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary)
+                    new ButtonBuilder().setCustomId("start_new_order").setLabel(" Browse other products").setStyle(ButtonStyle.Secondary)
                 )]
             });
         }
