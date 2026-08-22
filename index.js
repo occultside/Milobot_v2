@@ -1130,21 +1130,40 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        const queueUsers = await pool.query(`SELECT user_id FROM queue_notifications WHERE product_id = $1 ORDER BY joined_at ASC`, [productId]);
+        // 1. Remove da fila quem acabou de conseguir a reserva (para evitar mensagem duplicada)
+        await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (SELECT user_id FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW())`, [productId]);
+
+        // 2. Pega apenas quem REALMENTE está na fila (sem reserva ativa)
+        const queueUsers = await pool.query(
+            `SELECT user_id FROM queue_notifications 
+             WHERE product_id = $1 AND user_id NOT IN (
+                 SELECT user_id FROM product_reservations 
+                 WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
+             ) 
+             ORDER BY joined_at ASC`, 
+            [productId]
+        );
+
         for (const row of queueUsers.rows) {
             try {
+                // Usa a stored procedure que já considera as reservas ativas no cálculo
                 const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
                 if (info.rows.length === 0) continue;
                 
                 const user = await client.users.fetch(row.user_id);
-                const msg = info.rows[0].is_first && info.rows[0].posicao === 1 ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${info.rows[0].wait_time_minutes} minutes**.` : `**Queue Position: #${info.rows[0].posicao}**\nEstimated wait time: ~**${info.rows[0].wait_time_minutes} minutes**.`;
+                const pos = info.rows[0].posicao;
+                const wait = info.rows[0].wait_time_minutes;
                 
+                // Mensagem dinâmica baseada na posição real
+                const msg = pos === 1 
+                    ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${wait} minutes**.` 
+                    : `**Queue Position: #${pos}**\nEstimated wait time: ~**${wait} minutes**.`;
+                    
                 await (await user.createDM()).send({ content: msg });
-            } catch (e) {}
+            } catch (e) { console.error("Erro ao notificar fila:", e); }
         }
-    } catch (err) {}
+    } catch (err) { console.error("Erro crítico na notificação da fila:", err); }
 }
-
 async function clearQueueAndNotifyBought(productId, store) {
     try {
         const queueRes = await pool.query(`SELECT user_id FROM queue_notifications WHERE product_id = $1`, [productId]);
