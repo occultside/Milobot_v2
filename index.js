@@ -1135,12 +1135,12 @@ async function notifyFullQueue(productId, store) {
 
         // 2. Pega apenas quem REALMENTE está na fila (sem reserva ativa)
         const queueUsers = await pool.query(
-            `SELECT user_id FROM queue_notifications 
+            `SELECT user_id FROM queue_notifications
              WHERE product_id = $1 AND user_id NOT IN (
-                 SELECT user_id FROM product_reservations 
+                 SELECT user_id FROM product_reservations
                  WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
-             ) 
-             ORDER BY joined_at ASC`, 
+             )
+             ORDER BY joined_at ASC`,
             [productId]
         );
 
@@ -1148,15 +1148,19 @@ async function notifyFullQueue(productId, store) {
             try {
                 const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
                 if (info.rows.length === 0) continue;
-                
+
                 const user = await client.users.fetch(row.user_id);
                 const pos = info.rows[0].posicao;
-                const wait = info.rows[0].wait_time_minutes;
                 
-                const msg = pos === 1 
-                    ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${wait} minutes**.` 
+                // CORREÇÃO DO CÁLCULO DE TEMPO:
+                // Subtrai 10 minutos (tempo do #1) para cada posição após a primeira
+                // Se for #2, espera ~10min. Se for #3, espera ~20min, etc.
+                const wait = Math.max(0, (pos - 1) * 10); 
+
+                const msg = pos === 1
+                    ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${wait} minutes**.`
                     : `**Queue Position: #${pos}**\nEstimated wait time: ~**${wait} minutes**.`;
-                    
+
                 await (await user.createDM()).send({ content: msg });
             } catch (e) { console.error("Erro ao notificar fila:", e); }
         }
@@ -1211,16 +1215,16 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
         
         // 1. Limpa expirados dentro da transação
         await client.query(
-            `UPDATE product_reservations SET status = 'EXPIRED' 
-             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, 
+            `UPDATE product_reservations SET status = 'EXPIRED'
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`,
             [productId]
         );
-        
-        // 2. Verifica se existe reserva ativa COM LOCK para evitar race condition
+
+        // 2. Verifica se existe reserva ativa COM LOCK
         const activeCheck = await client.query(
-            `SELECT * FROM product_reservations 
-             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
-             FOR UPDATE SKIP LOCKED`, 
+            `SELECT * FROM product_reservations
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
+             FOR UPDATE SKIP LOCKED`,
             [productId]
         );
 
@@ -1229,26 +1233,25 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
             return { success: false, message: "Product is currently reserved by another user." };
         }
 
-        // 3. Cria a reserva com expires_at baseado no NOW() do banco
+        // 3. Cria a reserva usando o NOW() do banco para garantir precisão
         await client.query(
-            `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) 
-             VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`, 
+            `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status)
+             VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`,
             [userId, productId, store, durationMinutes]
         );
-        
+
         await client.query('COMMIT');
-        
-        // Retorna o expires_at real para sincronizar a mensagem
+
+        // Retorna o expires_at real do banco para sincronizar a mensagem
         const newRes = await pool.query(
-            `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`, 
+            `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
             [userId, productId]
         );
-        
-        return { 
-            success: true, 
-            expiresAt: newRes.rows[0]?.expires_at 
-        };
 
+        return {
+            success: true,
+            expiresAt: newRes.rows[0]?.expires_at
+        };
     } catch (err) {
         await client.query('ROLLBACK');
         console.error("Reservation error:", err);
@@ -2593,16 +2596,24 @@ if (action === "portfolio") {
             });
         }
 
-        // --- VERIFICAÇÃO DE DUPLICIDADE ---
-        const existingReservation = await pool.query(
-            `SELECT * FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`, 
-            [interaction.user.id, s.product.id]
-        );
-        
-        const existingQueue = await pool.query(
-            `SELECT * FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, 
-            [interaction.user.id, s.product.id]
-        );
+        // Dentro do handler "payment_method", logo após a verificação de bloqueio:
+
+// --- VERIFICAÇÃO DE DUPLICIDADE E RESERVA ATIVA ---
+const existingReservation = await pool.query(
+    `SELECT * FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`,
+    [interaction.user.id, s.product.id]
+);
+
+// Se o usuário JÁ TEM uma reserva ativa, não envie a mensagem de "You are #1" novamente
+// Apenas mostre o tempo restante
+if (existingReservation.rows.length > 0) {
+    const expiresTs = Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000);
+    return interaction.editReply({
+        content: `⚠️ **You already have this product reserved!**\nYou are in position **#1** and have until <t:${expiresTs}:R> to finalize payment.`,
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary))]
+    });
+}
+// -----------------------------------------
 
         if (existingReservation.rows.length > 0) {
             const expiresTs = Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000);
