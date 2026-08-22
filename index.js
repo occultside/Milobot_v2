@@ -2567,23 +2567,31 @@ if (action === "portfolio") {
 
     await registerInteraction(interaction.user.id, s.product.id, s.product.store);
     const reservation = await checkAndReserveProduct(interaction.user.id, s.product.id, s.product.store, 10);
-    
     let position, waitTime;
-    if (reservation.success) {
-        position = 1; waitTime = 0;
-        s.step = "waiting_for_payment_method";
-        startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
+if (reservation.success) {
+    position = 1; waitTime = 0;
+    s.step = "waiting_for_payment_method";
+    startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
 
-        await pool.query(`DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [interaction.user.id, s.product.id]);
+    // ✅ SEU CÓDIGO DE DELETE ESTÁ CORRETO AQUI:
+    await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
     
-    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id,
-        await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
-        
-        await interaction.editReply({ 
-            content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n⏰ Expires at: <t:${Math.floor((Date.now() + 10 * 60 * 1000) / 1000)}:R>` 
-        });
-        
-        await notifyFullQueue(s.product.id, s.product.store);
+    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
+    
+    // ✅ CORREÇÃO DO TEMPO: Usa o NOW() do banco para garantir sincronia perfeita
+    const dbTimeRes = await pool.query(`SELECT NOW() as now`);
+    const dbNow = new Date(dbTimeRes.rows[0].now);
+    const expiresAt = new Date(dbNow.getTime() + 10 * 60 * 1000);
+    const expiresTimestamp = Math.floor(expiresAt.getTime() / 1000);
+
+    await interaction.editReply({
+        content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n Expires at: <t:${expiresTimestamp}:R>`
+    });
+
+    await notifyFullQueue(s.product.id, s.product.store);
+    
+    // ... resto do código de preços ...
+}
         
         // ... (Mantenha o restante do código de cálculo de preço e botões aqui) ...
         const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
