@@ -1191,12 +1191,19 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
     try {
         await client.query('BEGIN');
         
-        // 1. Limpa expirados primeiro dentro da transação
-        await client.query(`UPDATE product_reservations SET status = 'EXPIRED' WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, [productId]);
+        // 1. Limpa expirados dentro da transação
+        await client.query(
+            `UPDATE product_reservations SET status = 'EXPIRED' 
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, 
+            [productId]
+        );
         
-        // 2. Verifica se já existe alguém ativo AGORA (com lock para evitar race condition)
+        // 2. Verifica se existe reserva ativa COM LOCK para evitar race condition
+        // FOR UPDATE SKIP LOCKED garante que apenas UM processo veja a linha como "livre"
         const activeCheck = await client.query(
-            `SELECT * FROM product_reservations WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() FOR UPDATE SKIP LOCKED`, 
+            `SELECT * FROM product_reservations 
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
+             FOR UPDATE SKIP LOCKED`, 
             [productId]
         );
 
@@ -1205,14 +1212,25 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
             return { success: false, message: "Product is currently reserved by another user." };
         }
 
-        // 3. Se estiver livre, cria a reserva
+        // 3. Se estiver livre, cria a reserva com expires_at baseado no NOW() do banco
         await client.query(
-            `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`, 
+            `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) 
+             VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`, 
             [userId, productId, store, durationMinutes]
         );
         
         await client.query('COMMIT');
-        return { success: true };
+        
+        // Retorna o expires_at real para sincronizar a mensagem
+        const newRes = await pool.query(
+            `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`, 
+            [userId, productId]
+        );
+        
+        return { 
+            success: true, 
+            expiresAt: newRes.rows[0]?.expires_at 
+        };
 
     } catch (err) {
         await client.query('ROLLBACK');
