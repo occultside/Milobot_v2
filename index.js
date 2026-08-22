@@ -2608,7 +2608,7 @@ if (action === "portfolio") {
             const expiresTs = Math.floor(new Date(existingReservation.rows[0].expires_at).getTime() / 1000);
             return interaction.editReply({ 
                 content: `⚠️ **You already have this product reserved!**\nYou are in position **#1** and have until <t:${expiresTs}:R> to finalize payment.`,
-                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Browse other products").setStyle(ButtonStyle.Secondary))]
+                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary))]
             });
         }
 
@@ -2643,7 +2643,7 @@ if (action === "portfolio") {
             const expiresTs = reservation.expiresAt ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
             await interaction.editReply({ 
-                content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n Expires at: <t:${expiresTs}:R>` 
+                content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n⏰ Expires at: <t:${expiresTs}:R>` 
             });
             
             await notifyFullQueue(s.product.id, s.product.store);
@@ -2666,10 +2666,10 @@ if (action === "portfolio") {
             const creditInfo = hasCredits ? `\n💳 **Credits Available:** $${availableCredits.toFixed(2)} (Applied automatically)` : "";
             
             const buttons = [
-                new ButtonBuilder().setCustomId("pay_stripe").setLabel(" Pay with Stripe").setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId("pay_stripe").setLabel("💳 Pay with Stripe").setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId("pay_lindens").setLabel("💎 Pay with Lindens").setStyle(ButtonStyle.Primary)
             ];
-            if (availableCredits >= priceStripeRaw) buttons.push(new ButtonBuilder().setCustomId("pay_credits").setLabel(" Use Credits").setStyle(ButtonStyle.Secondary));
+            if (availableCredits >= priceStripeRaw) buttons.push(new ButtonBuilder().setCustomId("pay_credits").setLabel("💳 Use Credits").setStyle(ButtonStyle.Secondary));
             
             await interaction.followUp({
                 embeds: [new EmbedBuilder().setTitle('Payment Options').setColor(isPremium ? 0xFFD700 : 0x2ecc71).addFields(
@@ -2695,7 +2695,7 @@ if (action === "portfolio") {
             return interaction.editReply({
                 content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
                 components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel(" Notify me if released").setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
                     new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary)
                 )]
             });
