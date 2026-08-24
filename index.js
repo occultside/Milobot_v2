@@ -2684,8 +2684,6 @@ await interaction.editReply({
     // ... mantenha os components aqui
 });
 
-    await notifyFullQueue(s.product.id, s.product.store);
-            
             // CÁLCULO DE PREÇOS E BOTÕES
             const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
             const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price;
