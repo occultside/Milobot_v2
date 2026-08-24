@@ -2651,11 +2651,11 @@ if (action === "portfolio") {
     await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
     await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
 
-    // CÁLCULO EM UTC PURO - IGNORA CONFIGURAÇÃO DE FUSO DO SERVIDOR
-// Usa o expires_at retornado pela função checkAndReserveProduct (que usa NOW() do PG)
-const expiresTs = reservation.expiresAt 
-    ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) 
-    : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
+    // CORREÇÃO DEFINITIVA DE FUSO: Usa UTC puro baseado no NOW() do sistema + 10min
+// Isso elimina qualquer diferença entre DB, Servidor e Cliente Discord
+const nowUtc = new Date();
+const expiresDate = new Date(nowUtc.getTime() + (10 * 60 * 1000));
+const expiresTs = Math.floor(expiresDate.getTime() / 1000);
 
 await interaction.editReply({
     content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\nExpires at: <t:${expiresTs}:R>`,
