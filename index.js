@@ -1130,18 +1130,19 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // Remove da fila quem JÁ TEM reserva ativa (evita envio duplicado)
+        // 1. Limpeza preventiva: Remove da fila quem JÁ TEM reserva ativa 
+        // Isso impede que o antigo #2 receba notificação de fila se ele já foi promovido
         await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (
             SELECT user_id FROM product_reservations 
             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
         )`, [productId]);
 
-        // Pega apenas quem REALMENTE está esperando
+        // 2. Busca apenas quem REALMENTE está esperando (sem reserva ativa)
         const queueUsers = await pool.query(
-            `SELECT user_id FROM queue_notifications
+            `SELECT user_id FROM queue_notifications 
              WHERE product_id = $1 AND user_id NOT IN (
-                 SELECT user_id FROM product_reservations
-                 WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
+                SELECT user_id FROM product_reservations 
+                WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
              )
              ORDER BY joined_at ASC`,
             [productId]
@@ -1151,19 +1152,20 @@ async function notifyFullQueue(productId, store) {
             try {
                 const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
                 if (info.rows.length === 0) continue;
-
+                
                 const user = await client.users.fetch(row.user_id);
                 const pos = info.rows[0].posicao;
                 
-                // CORREÇÃO DE CÁLCULO: 
+                // CORREÇÃO DE CÁLCULO:
                 // Se for #2, espera ~10min (tempo do #1). Se for #3, espera ~20min, etc.
-                // A função get_user_queue_info deve retornar isso, mas garantimos aqui:
-                const wait = Math.max(0, (pos - 1) * 10); 
-
-                const msg = pos === 1
-                    ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${wait} minutes**.`
+                const wait = Math.max(0, (pos - 1) * 10);
+                
+                // MENSAGEM CORRIGIDA: Só diz "You are #1" se ele realmente for o primeiro DA FILA
+                // e NÃO tiver reserva ativa (o que já foi filtrado acima)
+                const msg = pos === 1 
+                    ? `**You are #1 in the queue!**\nThe product will be available for you in approximately **${wait} minutes**.`
                     : `**Queue Position: #${pos}**\nEstimated wait time: ~**${wait} minutes**.`;
-
+                    
                 await (await user.createDM()).send({ content: msg });
             } catch (e) { console.error("Erro ao notificar fila:", e); }
         }
@@ -1328,7 +1330,9 @@ async function notifyNextInQueue(productId, store) {
                 `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`, 
                 [userId, productId]
             );
-            const expiresTs = resInfo.rows[0] ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
+            const expiresTs = resInfo.rows[0] 
+    ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) 
+    : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
             await dm.send({
                 content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\n\nClick below to proceed:`,
@@ -2640,23 +2644,28 @@ if (action === "portfolio") {
         let position, waitTime;
         
         if (reservation.success) {
-            position = 1; 
-            waitTime = 0;
-            s.step = "waiting_for_payment_method";
-            startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
-            
-            // Remove da fila imediatamente após conseguir a reserva
-            await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
-            await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
-            
-            // CORREÇÃO DE FUSO: Usa o expiresAt retornado pela função atômica (sincronizado com o DB)
-            const expiresTs = reservation.expiresAt ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
-            
-            await interaction.editReply({
-                content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\n Expires at: <t:${expiresTs}:R>`
-            });
-            
-            await notifyFullQueue(s.product.id, s.product.store);
+    position = 1;
+    waitTime = 0;
+    s.step = "waiting_for_payment_method";
+    startPaymentSelectionTimer(interaction.user.id, s.product.id, s.product.store);
+    
+    // Remove da fila imediatamente após conseguir a reserva
+    await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
+    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
+
+    // ✅ CORREÇÃO DE FUSO E IDIOMA APLICADA AQUI
+    // Usa o expiresAt retornado pela função atômica (já sincronizado com o DB)
+    // Math.floor garante que seja um inteiro válido para o Discord
+    const expiresTs = reservation.expiresAt 
+        ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) 
+        : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
+
+    await interaction.editReply({
+        content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\nExpires at: <t:${expiresTs}:R>`,
+        components: [] // Adicione os componentes de pagamento aqui se necessário
+    });
+
+    await notifyFullQueue(s.product.id, s.product.store);
             
             // CÁLCULO DE PREÇOS E BOTÕES
             const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
