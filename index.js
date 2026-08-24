@@ -1316,18 +1316,25 @@ async function notifyNextInQueue(productId, store) {
             const user = await client.users.fetch(userId); 
             const dm = await user.createDM();
             
-            // Busca o expires_at REAL criado pelo banco agora mesmo
-            const resInfo = await pool.query(
-                `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
-                [userId, productId]
-            );
+           // Busca quantos segundos realmente faltam para a reserva expirar.
+// O PostgreSQL calcula isso diretamente, evitando qualquer problema de fuso horário.
+const resInfo = await pool.query(
+    `SELECT GREATEST(
+        0,
+        EXTRACT(EPOCH FROM (expires_at - NOW()))
+    )::INT AS seconds_left
+     FROM product_reservations
+     WHERE user_id = $1
+       AND product_id = $2
+       AND status = 'ACTIVE'
+     LIMIT 1`,
+    [userId, productId]
+);
+
+// Converte o tempo restante real para um timestamp Unix do Discord.
+const secondsLeft = resInfo.rows[0]?.seconds_left ?? 600;
+const expiresTs = Math.floor(Date.now() / 1000) + secondsLeft;
             
-            // CÁLCULO EM UTC PURO: Converte o timestamp do DB para segundos Unix absolutos
-            // Isso elimina qualquer diferença de fuso horário entre Servidor/DB/Discord
-            const expiresTs = resInfo.rows[0]
-                ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000)
-                : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
-                
             await dm.send({
                 content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\nClick below to proceed:`,
                 components: [new ActionRowBuilder().addComponents(
