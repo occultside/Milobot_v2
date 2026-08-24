@@ -1295,97 +1295,86 @@ async function checkAndReserveProduct(userId, productId, store, durationMinutes 
 }
 
 async function notifyNextInQueue(productId, store) {
-    const client = await pool.connect();
+    // Usa o cliente global do Discord explicitamente para evitar conflito com 'pool.connect()'
+    const discordClient = require('discord.js').Client; // Fallback seguro ou use a variável global 'client' se estiver no escopo
+    
+    const dbClient = await pool.connect();
     try {
-        await client.query('BEGIN');
+        await dbClient.query('BEGIN');
         
-        // 1. Limpa reservas expiradas dentro da transação
-        await client.query(
+        // Limpa expirados
+        await dbClient.query(
             `UPDATE product_reservations SET status = 'EXPIRED' 
              WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`, 
             [productId]
         );
         
-        // 2. Pega o próximo da fila COM LOCK para evitar race condition
-        const nextUserRes = await client.query(
+        // Pega o próximo da fila
+        const nextUserRes = await dbClient.query(
             `SELECT user_id FROM queue_notifications 
              WHERE product_id = $1 AND notified = FALSE 
              ORDER BY joined_at ASC 
-             LIMIT 1 
-             FOR UPDATE SKIP LOCKED`, 
+             LIMIT 1 FOR UPDATE SKIP LOCKED`, 
             [productId]
         );
-
+        
         if (nextUserRes.rows.length === 0) {
-            await client.query('ROLLBACK');
+            await dbClient.query('ROLLBACK');
             return;
         }
-
+        
         const userId = nextUserRes.rows[0].user_id;
-
-        // 3. Cria a reserva IMEDIATAMENTE (agora conta os 10 min a partir deste momento)
-        await client.query(
+        
+        // Cria reserva de 10 min
+        await dbClient.query(
             `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status) 
              VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', 'ACTIVE')`, 
             [userId, productId, store]
         );
-
-        // 4. Remove da fila de espera (ele já tem a reserva ativa)
-        await client.query(
-            `DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, 
-            [userId, productId]
-        );
-
-        // Marca como notificado (caso precise de auditoria)
-        await client.query(
-            `UPDATE queue_notifications SET notified = TRUE WHERE user_id = $1 AND product_id = $2`, 
-            [userId, productId]
-        );
-
-        await client.query('COMMIT');
-
-        // 5. Inicia o timer de inatividade AGORA (3 min para escolher pagamento)
+        
+        // Remove da fila e marca como notificado
+        await dbClient.query(`DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [userId, productId]);
+        await dbClient.query(`UPDATE queue_notifications SET notified = TRUE WHERE user_id = $1 AND product_id = $2`, [userId, productId]);
+        
+        await dbClient.query('COMMIT');
+        
+        // Inicia timer de inatividade
         startPaymentSelectionTimer(userId, productId, store);
-
-        // 6. Envia a DM informando que a reserva JÁ ESTÁ ATIVA
+        
+        // Envia DM CORRETA para o novo #1 (Bob)
         try {
-            const user = await client.users.fetch(userId);
+            // Garante que estamos usando o client do Discord global
+            const user = await client.users.fetch(userId); 
             const dm = await user.createDM();
             
-            // Busca o expires_at real criado no DB para mostrar na mensagem
             const resInfo = await pool.query(
-    `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
-    [userId, productId]
-);
-// CÁLCULO EM UTC PURO
-const expiresTs = resInfo.rows[0] 
-    ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) 
-    : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
-
-await dm.send({
-    content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\nClick below to proceed:`,
-    // ... components
-});
+                `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
+                [userId, productId]
+            );
+            
+            const expiresTs = resInfo.rows[0] 
+                ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) 
+                : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
+                
+            await dm.send({
+                content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n You have until <t:${expiresTs}:R> to complete payment.\nClick below to proceed:`,
+                components: [new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`queue_claim_${productId.replace(/ /g, '_')}`).setLabel("💳 Complete Payment").setStyle(ButtonStyle.Success)
+                )]
+            });
         } catch (e) { console.error("Erro ao enviar DM de liberação:", e); }
-
-        // 7. Loga a promoção
-        const prev = await pool.query(
-            `SELECT user_id FROM product_reservations WHERE product_id = $1 AND status = 'EXPIRED' ORDER BY expires_at DESC LIMIT 1`, 
-            [productId]
-        );
-        await sendQueueLog('promoted', { 
-            userId, 
-            productId, 
-            store, 
-            previousUser: prev.rows[0]?.user_id, 
-            timeLeft: 10 
-        });
-
+        
+        // Loga a promoção
+        await sendQueueLog('promoted', { userId, productId, store, timeLeft: 10 });
+        
+        // NOTIFICA OS DEMAIS DA FILA SOBRE A MUDANÇA DE POSIÇÃO (Opcional, mas evita confusão)
+        // Se quiser que o #3 saiba que virou #2, faça aqui. Senão, eles só sabem quando clicarem novamente.
+        
     } catch (err) {
-        await client.query('ROLLBACK');
+        await dbClient.query('ROLLBACK');
         console.error("Erro crítico em notifyNextInQueue:", err);
     } finally {
-        client.release();
+        dbClient.release();
     }
 }
 
@@ -2770,11 +2759,12 @@ await interaction.editReply({
                 flags: [MessageFlags.Ephemeral]
             });
             
-        } else {
-    // Se falhou na reserva, vai para a fila
+        // ... dentro de payment_method, após falhar na reserva ...
+} else {
+    // Entra na fila silenciosamente (sem notificar todos)
     await pool.query(`INSERT INTO queue_notifications (user_id, product_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING`, [interaction.user.id, s.product.id]);
     
-    // CÁLCULO DE TEMPO REAL PARA QUEM ENTRA NA FILA AGORA
+    // CÁLCULO SEGURO DE TEMPO (Evita 190min)
     const activeRes = await pool.query(
         `SELECT expires_at FROM product_reservations 
          WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
@@ -2784,12 +2774,13 @@ await interaction.editReply({
     
     let timeLeftCurrentHolder = 0;
     if (activeRes.rows.length > 0) {
-        const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
-        const now = Date.now();
-        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000));
+        // Conversão explícita para timestamp UTC em milissegundos
+        const expiresAtMs = new Date(activeRes.rows[0].expires_at).getTime();
+        const nowMs = Date.now();
+        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAtMs - nowMs) / 60000));
     }
-    
-    // Conta quantas pessoas estão NA FILA antes deste usuário
+
+    // Conta pessoas NA FILA (excluindo quem já tem reserva ativa)
     const qCountRes = await pool.query(
         `SELECT COUNT(*) as count FROM queue_notifications 
          WHERE product_id = $1 AND joined_at < (SELECT joined_at FROM queue_notifications WHERE user_id = $2 AND product_id = $1)`,
@@ -2797,16 +2788,15 @@ await interaction.editReply({
     );
     const peopleAheadInQueue = parseInt(qCountRes.rows[0].count);
     
-    // Tempo total = TempoRestanteDo#1 + (PessoasNaFilaAntes * 10min)
+    // Tempo = Restante do #1 + (Pessoas na fila * 10min)
     const waitTime = timeLeftCurrentHolder + (peopleAheadInQueue * 10);
-    
-    // Posição global = 1 (reserva ativa) + pessoas na fila antes dele + 1 (ele mesmo)
-    const position = 1 + peopleAheadInQueue + 1;
+    const position = 1 + peopleAheadInQueue + 1; // #1 é a reserva ativa
     
     await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position, waitTime });
     
+    // ENVIA APENAS PARA QUEM CLIQUOU (Sem spam para os outros)
     return interaction.editReply({
-        content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
+        content: ` **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
         components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary)
