@@ -2800,7 +2800,7 @@ await interaction.editReply({
             const creditInfo = hasCredits ? `\n💳 **Credits Available:** $${availableCredits.toFixed(2)} (Applied automatically)` : "";
             
             const buttons = [
-                new ButtonBuilder().setCustomId("pay_stripe").setLabel(" Pay with Stripe").setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId("pay_stripe").setLabel(" 💳 Pay with Stripe").setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId("pay_lindens").setLabel("💎 Pay with Lindens").setStyle(ButtonStyle.Primary)
             ];
             
