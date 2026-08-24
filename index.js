@@ -5,7 +5,6 @@ const Stripe = require('stripe');
 const express = require('express');
 const fetch = require('node-fetch');
 const { JWT } = require('google-auth-library');
-process.env.TZ = 'America/Sao_Paulo';
 
 // ====================== BLINDAGEM DE VARIÁVEIS AMBIENTAIS ======================
 const rawKey = process.env.GOOGLE_PRIVATE_KEY;
@@ -1327,19 +1326,18 @@ async function notifyNextInQueue(productId, store) {
             
             // Busca o expires_at real criado no DB para mostrar na mensagem
             const resInfo = await pool.query(
-                `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`, 
-                [userId, productId]
-            );
-            const expiresTs = resInfo.rows[0] 
+    `SELECT expires_at FROM product_reservations WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'`,
+    [userId, productId]
+);
+// CÁLCULO EM UTC PURO
+const expiresTs = resInfo.rows[0] 
     ? Math.floor(new Date(resInfo.rows[0].expires_at).getTime() / 1000) 
     : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
-            await dm.send({
-                content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\n\nClick below to proceed:`,
-                components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`queue_claim_${productId.replace(/ /g, '_')}`).setLabel("Complete Purchase Now").setStyle(ButtonStyle.Success)
-                )]
-            });
+await dm.send({
+    content: `**Product Released!**\nThe previous reservation expired. **${productId}** is now reserved exclusively for you!\n⏰ You have until <t:${expiresTs}:R> to complete payment.\nClick below to proceed:`,
+    // ... components
+});
         } catch (e) { console.error("Erro ao enviar DM de liberação:", e); }
 
         // 7. Loga a promoção
@@ -2653,17 +2651,16 @@ if (action === "portfolio") {
     await pool.query('DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2', [interaction.user.id, s.product.id]);
     await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position: 1, waitTime: 0 });
 
-    // ✅ CORREÇÃO DE FUSO E IDIOMA APLICADA AQUI
-    // Usa o expiresAt retornado pela função atômica (já sincronizado com o DB)
-    // Math.floor garante que seja um inteiro válido para o Discord
-    const expiresTs = reservation.expiresAt 
-        ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) 
-        : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
+    // CÁLCULO EM UTC PURO - IGNORA CONFIGURAÇÃO DE FUSO DO SERVIDOR
+// Usa o expires_at retornado pela função checkAndReserveProduct (que usa NOW() do PG)
+const expiresTs = reservation.expiresAt 
+    ? Math.floor(new Date(reservation.expiresAt).getTime() / 1000) 
+    : Math.floor((Date.now() + 10 * 60 * 1000) / 1000);
 
-    await interaction.editReply({
-        content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\nExpires at: <t:${expiresTs}:R>`,
-        components: [] // Adicione os componentes de pagamento aqui se necessário
-    });
+await interaction.editReply({
+    content: `✅ **You are #1!**\nThe product is now reserved exclusively for you for **10 minutes**.\nExpires at: <t:${expiresTs}:R>`,
+    // ... mantenha os components aqui
+});
 
     await notifyFullQueue(s.product.id, s.product.store);
             
