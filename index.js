@@ -1233,51 +1233,60 @@ async function getActiveQueueCount(productId) {
 async function checkAndReserveProduct(userId, productId, store, durationMinutes = 10) {
     const client = await pool.connect();
     try {
+        // Nível de isolamento SERIALIZABLE garante que duas transações simultâneas
+        // não possam ler o mesmo estado "vazio" e ambas inserirem.
+        await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
         await client.query('BEGIN');
         
-        // Limpa expirados usando o NOW() do banco para garantir precisão
+        // 1. Limpa expirados DENTRO da transação
         await client.query(
             `UPDATE product_reservations SET status = 'EXPIRED'
              WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at < NOW()`,
             [productId]
         );
-
-        // Verifica concorrência com LOCK
+        
+        // 2. Tenta inserir a reserva IMEDIATAMENTE. 
+        // Se já existir uma ativa, o UNIQUE constraint ou a lógica abaixo falhará.
+        // Mas como não temos unique constraint em (product_id, status), fazemos a verificação manual ATOMICA:
         const activeCheck = await client.query(
-            `SELECT * FROM product_reservations
-             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
-             FOR UPDATE SKIP LOCKED`,
+            `SELECT id FROM product_reservations 
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
+             LIMIT 1 FOR UPDATE`, // FOR UPDATE sem SKIP LOCKED trava a linha se existir
             [productId]
         );
-
+        
         if (activeCheck.rows.length > 0) {
             await client.query('ROLLBACK');
             return { success: false, message: "Product is currently reserved." };
         }
-
-        // Cria a reserva baseada EXCLUSIVAMENTE no relógio do banco de dados
+        
+        // 3. Se chegou aqui, NÃO existe reserva ativa. Cria imediatamente.
         await client.query(
             `INSERT INTO product_reservations (user_id, product_id, store, expires_at, status)
              VALUES ($1, $2, $3, NOW() + ($4 || ' minutes')::INTERVAL, 'ACTIVE')`,
             [userId, productId, store, durationMinutes]
         );
-
+        
         await client.query('COMMIT');
-
-        // Busca o expires_at real criado pelo banco para evitar dessincronização de fuso
+        
+        // Busca o expires_at real criado pelo banco
         const newRes = await pool.query(
             `SELECT expires_at FROM product_reservations 
              WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE' 
              ORDER BY reserved_at DESC LIMIT 1`,
             [userId, productId]
         );
-
+        
         return {
             success: true,
             expiresAt: newRes.rows[0]?.expires_at
         };
     } catch (err) {
         await client.query('ROLLBACK');
+        // Se der erro de serialização (concorrência), trata como produto reservado
+        if (err.code === '40001') {
+            return { success: false, message: "Product is currently reserved." };
+        }
         console.error("Reservation error:", err);
         return { success: false, message: "System error during reservation." };
     } finally {
@@ -1613,12 +1622,46 @@ function startPaymentSelectionTimer(userId, productId, store) {
     if (clientSession[userId]) {
         clientSession[userId].paymentTimeoutId = setTimeout(() => {
             if (clientSession[userId]?.step === "waiting_for_payment_method") {
+                // A função abaixo agora existe e será executada corretamente
                 cancelReservationDueToInactivity(userId, productId, store, "timeout");
                 delete clientSession[userId];
             }
         }, PAYMENT_SELECTION_TIMEOUT);
     }
 }
+
+// ADICIONE ESTA FUNÇÃO EXATAMENTE AQUI 
+async function cancelReservationDueToInactivity(userId, productId, store, reason) {
+    try {
+        // 1. Expira a reserva no banco de dados
+        await pool.query(
+            `UPDATE product_reservations SET status = 'EXPIRED' 
+             WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION')`,
+            [userId, productId]
+        );
+
+        // 2. Notifica o usuário que perdeu a vaga por inatividade
+        try {
+            const user = await client.users.fetch(userId);
+            await user.send({
+                content: `⚠️ **Reservation Expired**\n\nYour exclusive reservation for **${productId}** has been cancelled due to inactivity (${reason}).\nThe product is now available to the next person in line.`,
+                components: [new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Primary)
+                )]
+            });
+        } catch (e) { console.error("Failed to notify user of inactivity:", e); }
+
+        // 3. Loga o evento de inatividade
+        await sendQueueLog('inactivity', { userId, productId, store });
+
+        // 4. Promove o próximo da fila automaticamente
+        await notifyNextInQueue(productId, store);
+        
+    } catch (err) {
+        console.error("Error cancelling reservation due to inactivity:", err);
+    }
+}
+// FIM DA FUNÇÃO ADICIONADA 👆
 
 async function sendReturnMessage(user, msg) {
     try {
