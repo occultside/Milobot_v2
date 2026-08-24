@@ -1129,60 +1129,26 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // 1. LIMPEZA AGRESSIVA: Remove quem JÁ TEM RESERVA ATIVA antes de listar
-        await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (
-            SELECT user_id FROM product_reservations 
-            WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
-        )`, [productId]);
-
-        // 2. Pega o tempo restante REAL do atual #1 (se existir)
-        const activeRes = await pool.query(
-            `SELECT expires_at FROM product_reservations 
-             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
-             ORDER BY reserved_at ASC LIMIT 1`,
+        // Pega todos da fila ordenados por entrada
+        const queueUsers = await pool.query(
+            `SELECT user_id FROM queue_notifications WHERE product_id = $1 ORDER BY joined_at ASC`, 
             [productId]
         );
         
-        let timeLeftCurrentHolder = 0;
-        if (activeRes.rows.length > 0) {
-            const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
-            const now = Date.now();
-            timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000));
-        }
-
-        // 3. Lista APENAS quem NÃO tem reserva ativa
-        const queueUsers = await pool.query(
-            `SELECT user_id, joined_at FROM queue_notifications 
-             WHERE product_id = $1 AND user_id NOT IN (
-                SELECT user_id FROM product_reservations 
-                WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
-             )
-             ORDER BY joined_at ASC`,
-            [productId]
-        );
-
-        for (let i = 0; i < queueUsers.rows.length; i++) {
+        for (const row of queueUsers.rows) {
             try {
-                const row = queueUsers.rows[i];
+                // Usa a Stored Procedure do banco para garantir cálculo correto de tempo e posição
+                const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
                 
-                // VERIFICAÇÃO DUPLA DE SEGURANÇA (Anti-Race Condition)
-                const hasActiveRes = await pool.query(
-                    `SELECT COUNT(*) as count FROM product_reservations 
-                     WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`,
-                    [row.user_id, productId]
-                );
-                if (parseInt(hasActiveRes.rows[0].count) > 0) continue; // PULA SE JÁ TEM RESERVA
-
+                if (info.rows.length === 0) continue;
+                
                 const user = await client.users.fetch(row.user_id);
+                const rowData = info.rows[0];
                 
-                // CÁLCULO CORRETO: TempoRestanteDo#1 + (PosiçãoNaFila * 10min)
-                // Posição na fila começa em 0 para o primeiro da lista queueUsers
-                const waitTime = timeLeftCurrentHolder + (i * 10);
-                const positionInQueue = i + 1; // Posição visual na fila de espera
-
-                const msg = positionInQueue === 1 && timeLeftCurrentHolder === 0
-                    ? `**You are #1 in the queue!**\nThe product will be available for you in approximately **${waitTime} minutes**.`
-                    : `**Queue Position: #${positionInQueue}**\nEstimated release in ~**${waitTime} min**.`;
+                // Mensagem baseada no retorno seguro do banco
+                const msg = rowData.is_first && rowData.posicao === 1 
+                    ? `**You are #1 in the queue!**\nThe product is reserved exclusively for you for approximately **${rowData.wait_time_minutes} minutes**.` 
+                    : `**Queue Position: #${rowData.posicao}**\nEstimated wait time: ~**${rowData.wait_time_minutes} minutes**.`;
                     
                 await (await user.createDM()).send({ content: msg });
             } catch (e) { console.error("Erro ao notificar fila:", e); }
@@ -2772,35 +2738,11 @@ await interaction.editReply({
     // Se falhou na reserva, vai para a fila
     await pool.query(`INSERT INTO queue_notifications (user_id, product_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING`, [interaction.user.id, s.product.id]);
     
-    // CÁLCULO CORRETO DE TEMPO REAL PARA QUEM ENTRA NA FILA AGORA
-    const activeRes = await pool.query(
-        `SELECT expires_at FROM product_reservations 
-         WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
-         ORDER BY reserved_at ASC LIMIT 1`,
-        [s.product.id]
-    );
+    // CÁLCULO SEGURO VIA STORED PROCEDURE
+    const posRes = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [interaction.user.id, s.product.id]); 
     
-    let timeLeftCurrentHolder = 0;
-    if (activeRes.rows.length > 0) {
-        // Usa getTime() para garantir milissegundos UTC puros, evitando erros de fuso horário do DB
-        const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
-        const now = Date.now();
-        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000));
-    }
-
-    // Conta quantas pessoas estão NA FILA antes deste usuário (excluindo quem já tem reserva ativa)
-    const qCountRes = await pool.query(
-        `SELECT COUNT(*) as count FROM queue_notifications 
-         WHERE product_id = $1 AND joined_at < (SELECT joined_at FROM queue_notifications WHERE user_id = $2 AND product_id = $1)`,
-        [s.product.id, interaction.user.id]
-    );
-    const peopleAheadInQueue = parseInt(qCountRes.rows[0].count);
-    
-    // Tempo total = TempoRestanteDo#1 + (PessoasNaFilaAntes * 10min)
-    const waitTime = timeLeftCurrentHolder + (peopleAheadInQueue * 10);
-    
-    // Posição global = 1 (reserva ativa) + pessoas na fila antes dele + 1 (ele mesmo)
-    const position = 1 + peopleAheadInQueue + 1;
+    const position = posRes.rows.length > 0 ? posRes.rows[0].posicao : '?';
+    const waitTime = posRes.rows.length > 0 ? posRes.rows[0].wait_time_minutes : 0;
     
     await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position, waitTime });
     
