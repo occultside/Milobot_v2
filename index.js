@@ -1495,7 +1495,7 @@ async function reopenAdminPanel(source, wizard) {
 async function reopenEditMenu(source, wizard, prodId) {
     const product = (await pool.query(`SELECT * FROM products WHERE id = $1 AND store = $2`, [prodId, wizard.store])).rows[0];
     if (!product) return;
-
+    
     wizard.step = "editing_product"; 
     wizard.productId = prodId; 
     wizard.productData = product;
@@ -1510,16 +1510,21 @@ async function reopenEditMenu(source, wizard, prodId) {
             { name: "📥 Download", value: product.file_download ? `[Link](${product.file_download})` : 'N/A', inline: false }
         ).setColor(0xf39c12);
 
-        const components = [
+    const components = [
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`edit_action_portfolio_${prodId.replace(/ /g, '_')}`).setLabel("🖼️ Send to Portfolio").setStyle(ButtonStyle.Primary), // <--- NOVO BOTÃO ADICIONADO AQUI
+            // --- NOVO BOTÃO ADICIONADO AQUI ---
+            new ButtonBuilder()
+                .setCustomId(`edit_action_portfolio_${prodId.replace(/ /g, '_')}`)
+                .setLabel("🖼️ Enviar p/ Portfólio")
+                .setStyle(ButtonStyle.Primary), 
+            // ----------------------------------
             new ButtonBuilder().setCustomId(`edit_action_price_${prodId.replace(/ /g, '_')}`).setLabel("💰 Alterar Preço").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId(`edit_action_image_${prodId.replace(/ /g, '_')}`).setLabel("🖼️ Alterar Imagem").setStyle(ButtonStyle.Secondary), 
-            new ButtonBuilder().setCustomId(`edit_action_download_${prodId.replace(/ /g, '_')}`).setLabel(" Alterar Download").setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId(`edit_action_download_${prodId.replace(/ /g, '_')}`).setLabel("📥 Alterar Download").setStyle(ButtonStyle.Secondary)
         ), 
         new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`edit_action_archive_${prodId.replace(/ /g, '_')}`).setLabel(product.archived ? "📦 Desarquivar" : "🗄️ Arquivar").setStyle(ButtonStyle.Danger), 
-            new ButtonBuilder().setCustomId(`edit_action_delete_${prodId.replace(/ /g, '_')}`).setLabel("️ Excluir Produto").setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`edit_action_delete_${prodId.replace(/ /g, '_')}`).setLabel("🗑️ Excluir Produto").setStyle(ButtonStyle.Danger)
         ), 
         new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("edit_back_to_list").setLabel("🔙 Ver Outros Produtos").setStyle(ButtonStyle.Secondary)
@@ -2288,28 +2293,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         // ====================== EDITAR PRODUTO ======================
-        if (interaction.isButton() && interaction.customId.startsWith("edit_action_")) {
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-            const w = adminWizard[interaction.user.id]; 
-            if (!w || w.type !== "edit" || !w.productId) return interaction.editReply({ content: "❌ Sessão expirada.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
-            
-            const parts = interaction.customId.split("_"); 
-            const action = parts[2]; 
-            const prodId = parts.slice(3).join("_").replace(/_/g, ' ');
-            // NOVA AÇÃO: SEND TO PORTFOLIO
-if (action === "portfolio") {
-    const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [prodId])).rows[0];
-    if (!product) return interaction.editReply({ content: "❌ Produto não encontrado." });
-    
-    try {
-        await sendToPortfolio(product, "admin_manual");
-        await interaction.editReply({ content: `🖼️ Produto **${prodId}** enviado para o Portfólio com sucesso!`, components: [] });
-        return reopenEditMenu(interaction, w, prodId);
-    } catch (err) {
-        return interaction.editReply({ content: `❌ Erro ao enviar para portfólio: ${err.message}` });
-    }
-}
-            if (action === "archive") { 
+            if (interaction.isButton() && interaction.customId.startsWith("edit_action_")) {
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const w = adminWizard[interaction.user.id]; 
+        if (!w || w.type !== "edit" || !w.productId) return interaction.editReply({ content: "❌ Sessão expirada.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
+        
+        const parts = interaction.customId.split("_"); 
+        const action = parts[2]; 
+        const prodId = parts.slice(3).join("_").replace(/_/g, ' ');
+
+        // --- NOVA LÓGICA: ENVIAR PARA PORTFÓLIO ---
+        if (action === "portfolio") {
+            const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [prodId])).rows[0];
+            if (!product) return interaction.editReply({ content: "❌ Produto não encontrado." });
+
+            try {
+                // 1. Marca como vendido/arquivado no DB
+                await pool.query(`UPDATE products SET archived = TRUE WHERE id = $1`, [prodId]);
+                
+                // 2. Atualiza a Planilha para "Vendido" (usando Admin como comprador)
+                await updateSaleInSheet(prodId, "ADMIN_MANUAL", "Portfolio", "", "Discord", 0, 0);
+
+                // 3. Envia para o canal de Portfólio
+                await sendToPortfolio(product, "admin_manual");
+
+                // 4. Atualiza a vitrine (remove do showcase ativo)
+                await syncShowcase({ ...product, archived: true });
+
+                await interaction.editReply({ content: `🖼️ Produto **${prodId}** enviado para o Portfólio e marcado como vendido!`, components: [] });
+                return reopenEditMenu(interaction, w, prodId);
+            } catch (err) {
+                console.error(err);
+                return interaction.editReply({ content: `❌ Erro ao enviar para portfólio: ${err.message}` });
+            }
+        }
+        // -----------------------------------------
+
+        if (action === "archive") {
+            // ... resto do código existente ...
                 const newStatus = !w.productData.archived; 
                 await pool.query(`UPDATE products SET archived = $1 WHERE id = $2`, [newStatus, prodId]); 
                 const updatedProduct = (await pool.query(`SELECT * FROM products WHERE id = $1`, [prodId])).rows[0]; 
@@ -2318,13 +2339,36 @@ if (action === "portfolio") {
                 return reopenEditMenu(interaction, w, prodId); 
             }
             
-            if (action === "delete") { 
-                await pool.query(`DELETE FROM products WHERE id = $1`, [prodId]); 
-                await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1`, [prodId]); 
-                await pool.query(`UPDATE product_reservations SET status = 'EXPIRED' WHERE product_id = $1`, [prodId]); 
-                delete adminWizard[interaction.user.id]; 
-                return interaction.editReply({ content: `🗑️ Produto **${prodId}** excluído permanentemente!`, components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("edit_back_to_list").setLabel("🔙 Ver Outros Produtos").setStyle(ButtonStyle.Secondary))] }); 
+                   if (action === "delete") { 
+            // 1. Verifica se existe um post no portfólio para este produto
+            const forumChannel = client.channels.cache.get(PORTFOLIO_CHANNEL_ID);
+            if (forumChannel) {
+                try {
+                    // Tenta buscar threads pelo nome do produto (já que salvamos o ID no nome da thread)
+                    const activeThreads = await forumChannel.threads.fetchActive();
+                    const targetThread = activeThreads.threads.find(t => t.name.includes(prodId));
+                    
+                    if (targetThread) {
+                        await targetThread.delete();
+                        console.log(`Portfólio thread for ${prodId} deleted.`);
+                    }
+                } catch (e) {
+                    console.error("Erro ao limpar portfólio na exclusão:", e);
+                }
             }
+
+            // 2. Deleta do Banco de Dados e Filas
+            await pool.query(`DELETE FROM products WHERE id = $1`, [prodId]); 
+            await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1`, [prodId]); 
+            await pool.query(`UPDATE product_reservations SET status = 'EXPIRED' WHERE product_id = $1`, [prodId]); 
+            
+            delete adminWizard[interaction.user.id]; 
+            
+            return interaction.editReply({ 
+                content: `🗑️ Produto **${prodId}** excluído permanentemente e removido do Portfólio!`, 
+                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("edit_back_to_list").setLabel("🔙 Ver Outros Produtos").setStyle(ButtonStyle.Secondary))] 
+            }); 
+        }
             
             if (action === "price") { 
                 w.step = "waiting_for_net_amount_edit"; 
