@@ -1163,7 +1163,7 @@ async function clearQueueAndNotifyBought(productId, store) {
         for (const row of queueRes.rows) {
             try {
                 await (await (await client.users.fetch(row.user_id)).createDM()).send({
-                    content: `**Product Sold Out**\nThe product you were waiting for has been purchased by another customer.`,
+                    content: `**🚫Product Sold Out**\nThe product you were waiting for has been purchased by another customer.`,
                     components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse Other Products").setStyle(ButtonStyle.Secondary))]
                 });
             } catch(e){}
@@ -1308,8 +1308,20 @@ async function notifyNextInQueue(productId, store) {
         
         await dbClient.query('COMMIT');
         
-        // 5. Inicia timer de inatividade
-        startPaymentSelectionTimer(userId, productId, store);
+       // 5. Cria a sessão enquanto o usuário ainda está na etapa
+// "Product Released".
+// Os 10 minutos da reserva já começaram no banco.
+clientSession[userId] = {
+    step: "waiting_for_payment_method",
+    product: {
+        id: productId,
+        store
+    },
+    lastActivity: Date.now()
+};
+
+// Inicia a tolerância de 3 minutos para clicar em Complete Payment.
+startPaymentSelectionTimer(userId, productId, store);
         
         // 6. Envia DM com TEMPO CORRETO (Sem erro de 3h)
         try {
@@ -1585,47 +1597,136 @@ function resetSessionTimer(userId) {
 }
 
 function startPaymentSelectionTimer(userId, productId, store) {
-    if (clientSession[userId]?.paymentTimeoutId) clearTimeout(clientSession[userId].paymentTimeoutId);
-    if (clientSession[userId]) {
-        clientSession[userId].paymentTimeoutId = setTimeout(() => {
-            if (clientSession[userId]?.step === "waiting_for_payment_method") {
-                // A função abaixo agora existe e será executada corretamente
-                cancelReservationDueToInactivity(userId, productId, store, "timeout");
-                delete clientSession[userId];
-            }
-        }, PAYMENT_SELECTION_TIMEOUT);
+    if (clientSession[userId]?.paymentTimeoutId) {
+        clearTimeout(clientSession[userId].paymentTimeoutId);
     }
+
+    if (!clientSession[userId]) {
+        clientSession[userId] = {
+            step: "waiting_for_payment_method",
+            product: { id: productId, store },
+            lastActivity: Date.now()
+        };
+    }
+
+    clientSession[userId].paymentTimeoutId = setTimeout(async () => {
+        const session = clientSession[userId];
+
+        // Só expulsa se a pessoa ainda NÃO clicou em Complete Payment.
+        if (session?.step === "waiting_for_payment_method") {
+            await cancelReservationDueToInactivity(
+                userId,
+                productId,
+                store,
+                "timeout"
+            );
+
+            delete clientSession[userId];
+        }
+    }, PAYMENT_SELECTION_TIMEOUT);
 }
 
 // ADICIONE ESTA FUNÇÃO EXATAMENTE AQUI 
 async function cancelReservationDueToInactivity(userId, productId, store, reason) {
     try {
-        // 1. Expira a reserva no banco de dados
-        await pool.query(
-            `UPDATE product_reservations SET status = 'EXPIRED' 
-             WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION')`,
+        // 1. Expira somente uma reserva que ainda esteja realmente ativa
+        const expiredRes = await pool.query(
+            `UPDATE product_reservations
+             SET status = 'EXPIRED'
+             WHERE user_id = $1
+               AND product_id = $2
+               AND status IN ('ACTIVE', 'SITE_RESERVATION')
+               AND expires_at > NOW()
+             RETURNING *`,
             [userId, productId]
         );
 
-        // 2. Notifica o usuário que perdeu a vaga por inatividade
+        // Se a reserva já foi expirada/processada, não faça nada.
+        if (expiredRes.rows.length === 0) {
+            return;async function cancelReservationDueToInactivity(userId, productId, store, reason) {
+    try {
+        // Cancela qualquer timer de 3 minutos que ainda esteja ativo
+        if (clientSession[userId]?.paymentTimeoutId) {
+            clearTimeout(clientSession[userId].paymentTimeoutId);
+            delete clientSession[userId].paymentTimeoutId;
+        }
+
+        // Expira a reserva atual
+        const expiredRes = await pool.query(
+            `UPDATE product_reservations
+             SET status = 'EXPIRED'
+             WHERE user_id = $1
+               AND product_id = $2
+               AND status IN ('ACTIVE', 'SITE_RESERVATION')
+             RETURNING *`,
+            [userId, productId]
+        );
+
+        // Se não havia reserva ativa, não continua
+        if (expiredRes.rows.length === 0) {
+            return;
+        }
+
+        // =====================================================
+        // END SESSION
+        // Não manda "Reservation Expired".
+        // O próprio botão já mostrará "Session ended successfully."
+        // =====================================================
+        if (reason === "end_session") {
+            await sendQueueLog('inactivity', {
+                userId,
+                productId,
+                store,
+                reason
+            });
+
+            await notifyNextInQueue(productId, store);
+            return;
+        }
+
+        // =====================================================
+        // TIMEOUT DOS 3 MINUTOS
+        // Aqui SIM manda Reservation Expired.
+        // =====================================================
         try {
             const user = await client.users.fetch(userId);
+
             await user.send({
-                content: `⚠️ **Reservation Expired**\n\nYour exclusive reservation for **${productId}** has been cancelled due to inactivity (${reason}).\nThe product is now available to the next person in line.`,
-                components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Primary)
-                )]
+                content:
+                    `⚠️ **Reservation Expired**\n\n` +
+                    `Your exclusive reservation for **${productId}** has been cancelled due to inactivity. ` +
+                    `The product is now available to the next person in line.`,
+                components: [
+                    new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId("start_new_order")
+                            .setLabel("🛒 Start New Order")
+                            .setStyle(ButtonStyle.Primary)
+                    )
+                ]
             });
-        } catch (e) { console.error("Failed to notify user of inactivity:", e); }
+        } catch (e) {
+            console.error(
+                "Failed to notify user of inactivity:",
+                e
+            );
+        }
 
-        // 3. Loga o evento de inatividade
-        await sendQueueLog('inactivity', { userId, productId, store });
+        await sendQueueLog('inactivity', {
+            userId,
+            productId,
+            store,
+            reason
+        });
 
-        // 4. Promove o próximo da fila automaticamente
+        // Promove o próximo
         await notifyNextInQueue(productId, store);
-        
+
     } catch (err) {
-        console.error("Error cancelling reservation due to inactivity:", err);
+        console.error(
+            "Error cancelling reservation due to inactivity:",
+            err
+        );
     }
 }
 // FIM DA FUNÇÃO ADICIONADA 👆
@@ -2810,15 +2911,21 @@ await interaction.editReply({
     const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [prodId])).rows[0];
     if (!product) return interaction.editReply({ content: " Product no longer available.", components: [] });
 
-    // Configura a sessão para等待 pelo método de pagamento
-    clientSession[interaction.user.id] = { 
-        step: "waiting_for_payment_method", 
-        product, 
-        lastActivity: Date.now() 
-    };
-    
-    // Reinicia o timer de seleção de pagamento (caso tenha clicado tarde)
-    startPaymentSelectionTimer(interaction.user.id, product.id, product.store);
+// Cancela o timer de tolerância de 3 minutos.
+// A partir daqui, o usuário já assumiu a vaga.
+if (clientSession[interaction.user.id]?.paymentTimeoutId) {
+    clearTimeout(clientSession[interaction.user.id].paymentTimeoutId);
+    delete clientSession[interaction.user.id].paymentTimeoutId;
+}
+
+// Mantém a mesma reserva e o mesmo expires_at.
+// NÃO adicionamos mais 10 minutos.
+clientSession[interaction.user.id] = {
+    ...clientSession[interaction.user.id],
+    step: "waiting_for_payment_method",
+    product,
+    lastActivity: Date.now()
+};
 
     const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
     const prices = typeof product.price === 'string' ? JSON.parse(product.price) : product.price;
