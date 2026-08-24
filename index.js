@@ -1129,15 +1129,30 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // 1. Limpeza preventiva agressiva
+        // 1. LIMPEZA AGRESSIVA: Remove quem JÁ TEM RESERVA ATIVA antes de listar
         await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (
             SELECT user_id FROM product_reservations 
             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
         )`, [productId]);
 
-        // 2. Busca apenas quem está na fila
+        // 2. Pega o tempo restante REAL do atual #1 (se existir)
+        const activeRes = await pool.query(
+            `SELECT expires_at FROM product_reservations 
+             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
+             ORDER BY reserved_at ASC LIMIT 1`,
+            [productId]
+        );
+        
+        let timeLeftCurrentHolder = 0;
+        if (activeRes.rows.length > 0) {
+            const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
+            const now = Date.now();
+            timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000));
+        }
+
+        // 3. Lista APENAS quem NÃO tem reserva ativa
         const queueUsers = await pool.query(
-            `SELECT user_id FROM queue_notifications 
+            `SELECT user_id, joined_at FROM queue_notifications 
              WHERE product_id = $1 AND user_id NOT IN (
                 SELECT user_id FROM product_reservations 
                 WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
@@ -1146,32 +1161,28 @@ async function notifyFullQueue(productId, store) {
             [productId]
         );
 
-        for (const row of queueUsers.rows) {
+        for (let i = 0; i < queueUsers.rows.length; i++) {
             try {
-                // VERIFICAÇÃO DUPLA DE SEGURANÇA ANTES DE ENVIAR MENSAGEM
-                // Garante que o usuário NÃO tenha reserva ativa neste exato milissegundo
+                const row = queueUsers.rows[i];
+                
+                // VERIFICAÇÃO DUPLA DE SEGURANÇA (Anti-Race Condition)
                 const hasActiveRes = await pool.query(
                     `SELECT COUNT(*) as count FROM product_reservations 
                      WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`,
                     [row.user_id, productId]
                 );
-                
-                // Se tiver reserva ativa, PULA este usuário completamente
-                if (parseInt(hasActiveRes.rows[0].count) > 0) continue;
+                if (parseInt(hasActiveRes.rows[0].count) > 0) continue; // PULA SE JÁ TEM RESERVA
 
-                const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
-                if (info.rows.length === 0) continue;
-                
                 const user = await client.users.fetch(row.user_id);
-                const pos = info.rows[0].posicao;
                 
-                // Cálculo seguro de espera
-                const wait = Math.max(0, (pos - 1) * 10);
-                
-                // Mensagem corrigida
-                const msg = pos === 1 
-                    ? `**You are #1 in the queue!**\nThe product will be available for you in approximately **${wait} minutes**.`
-                    : `**Queue Position: #${pos}**\nEstimated wait time: ~**${wait} minutes**.`;
+                // CÁLCULO CORRETO: TempoRestanteDo#1 + (PosiçãoNaFila * 10min)
+                // Posição na fila começa em 0 para o primeiro da lista queueUsers
+                const waitTime = timeLeftCurrentHolder + (i * 10);
+                const positionInQueue = i + 1; // Posição visual na fila de espera
+
+                const msg = positionInQueue === 1 && timeLeftCurrentHolder === 0
+                    ? `**You are #1 in the queue!**\nThe product will be available for you in approximately **${waitTime} minutes**.`
+                    : `**Queue Position: #${positionInQueue}**\nEstimated release in ~**${waitTime} min**.`;
                     
                 await (await user.createDM()).send({ content: msg });
             } catch (e) { console.error("Erro ao notificar fila:", e); }
@@ -2717,11 +2728,10 @@ await interaction.editReply({
             });
             
         } else {
-    // Se falhou na reserva (concorrência), vai para a fila
+    // Se falhou na reserva, vai para a fila
     await pool.query(`INSERT INTO queue_notifications (user_id, product_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING`, [interaction.user.id, s.product.id]);
     
-    // CORREÇÃO DE LÓGICA DE FILA: Cálculo baseado no TEMPO RESTANTE real
-    // 1. Pega o tempo restante da reserva ativa atual (se existir)
+    // CÁLCULO DE TEMPO REAL PARA QUEM ENTRA NA FILA AGORA
     const activeRes = await pool.query(
         `SELECT expires_at FROM product_reservations 
          WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
@@ -2733,10 +2743,10 @@ await interaction.editReply({
     if (activeRes.rows.length > 0) {
         const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
         const now = Date.now();
-        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000)); // Arredonda pra cima em minutos
+        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000));
     }
     
-    // 2. Conta quantas pessoas estão NA FILA antes deste usuário
+    // Conta quantas pessoas estão NA FILA antes deste usuário
     const qCountRes = await pool.query(
         `SELECT COUNT(*) as count FROM queue_notifications 
          WHERE product_id = $1 AND joined_at < (SELECT joined_at FROM queue_notifications WHERE user_id = $2 AND product_id = $1)`,
@@ -2744,7 +2754,7 @@ await interaction.editReply({
     );
     const peopleAheadInQueue = parseInt(qCountRes.rows[0].count);
     
-    // 3. Calcula o tempo total: TempoRestanteDo#1 + (PessoasNaFilaAntes * 10min)
+    // Tempo total = TempoRestanteDo#1 + (PessoasNaFilaAntes * 10min)
     const waitTime = timeLeftCurrentHolder + (peopleAheadInQueue * 10);
     
     // Posição global = 1 (reserva ativa) + pessoas na fila antes dele + 1 (ele mesmo)
@@ -2756,7 +2766,7 @@ await interaction.editReply({
         content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
         components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId("start_new_order").setLabel(" Browse other products").setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary)
         )]
     });
 }
