@@ -2717,26 +2717,49 @@ await interaction.editReply({
             });
             
         } else {
-            // Se falhou na reserva (concorrência), vai para a fila
-            await pool.query(`INSERT INTO queue_notifications (user_id, product_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING`, [interaction.user.id, s.product.id]);
-            
-            const qCount = parseInt((await pool.query(`SELECT COUNT(*) as count FROM queue_notifications WHERE product_id = $1`, [s.product.id])).rows[0].count);
-            const activeReservations = await getActiveQueueCount(s.product.id);
-            position = activeReservations + qCount;
-            
-            const posRes = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [interaction.user.id, s.product.id]);
-            waitTime = posRes.rows.length > 0 ? posRes.rows[0].wait_time_minutes : (position - 1) * 10;
-            
-            await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position, waitTime });
-            
-            return interaction.editReply({
-                content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
-                components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Browse other products").setStyle(ButtonStyle.Secondary)
-                )]
-            });
-        }
+    // Se falhou na reserva (concorrência), vai para a fila
+    await pool.query(`INSERT INTO queue_notifications (user_id, product_id, notified) VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING`, [interaction.user.id, s.product.id]);
+    
+    // CORREÇÃO DE LÓGICA DE FILA: Cálculo baseado no TEMPO RESTANTE real
+    // 1. Pega o tempo restante da reserva ativa atual (se existir)
+    const activeRes = await pool.query(
+        `SELECT expires_at FROM product_reservations 
+         WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW() 
+         ORDER BY reserved_at ASC LIMIT 1`,
+        [s.product.id]
+    );
+    
+    let timeLeftCurrentHolder = 0;
+    if (activeRes.rows.length > 0) {
+        const expiresAt = new Date(activeRes.rows[0].expires_at).getTime();
+        const now = Date.now();
+        timeLeftCurrentHolder = Math.max(0, Math.ceil((expiresAt - now) / 60000)); // Arredonda pra cima em minutos
+    }
+    
+    // 2. Conta quantas pessoas estão NA FILA antes deste usuário
+    const qCountRes = await pool.query(
+        `SELECT COUNT(*) as count FROM queue_notifications 
+         WHERE product_id = $1 AND joined_at < (SELECT joined_at FROM queue_notifications WHERE user_id = $2 AND product_id = $1)`,
+        [s.product.id, interaction.user.id]
+    );
+    const peopleAheadInQueue = parseInt(qCountRes.rows[0].count);
+    
+    // 3. Calcula o tempo total: TempoRestanteDo#1 + (PessoasNaFilaAntes * 10min)
+    const waitTime = timeLeftCurrentHolder + (peopleAheadInQueue * 10);
+    
+    // Posição global = 1 (reserva ativa) + pessoas na fila antes dele + 1 (ele mesmo)
+    const position = 1 + peopleAheadInQueue + 1;
+    
+    await sendQueueLog('entry', { userId: interaction.user.id, productId: s.product.id, store: s.product.store, position, waitTime });
+    
+    return interaction.editReply({
+        content: `📋 **Queue Position: #${position}**\n⏳ Estimated release in **~${waitTime} min**.`,
+        components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`notify_me_${s.product.id.replace(/ /g, '_')}`).setLabel("🔔 Notify me if released").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("start_new_order").setLabel(" Browse other products").setStyle(ButtonStyle.Secondary)
+        )]
+    });
+}
     } catch (err) {
         console.error("PAYMENT METHOD ERROR:", err);
         if (!interaction.replied && !interaction.deferred) {
