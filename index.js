@@ -1129,14 +1129,13 @@ async function registerInteraction(userId, productId, store) {
 
 async function notifyFullQueue(productId, store) {
     try {
-        // 1. Limpeza preventiva: Remove da fila quem JÁ TEM reserva ativa 
-        // Isso impede que o antigo #2 receba notificação de fila se ele já foi promovido
+        // 1. Limpeza preventiva agressiva
         await pool.query(`DELETE FROM queue_notifications WHERE product_id = $1 AND user_id IN (
             SELECT user_id FROM product_reservations 
             WHERE product_id = $1 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()
         )`, [productId]);
 
-        // 2. Busca apenas quem REALMENTE está esperando (sem reserva ativa)
+        // 2. Busca apenas quem está na fila
         const queueUsers = await pool.query(
             `SELECT user_id FROM queue_notifications 
              WHERE product_id = $1 AND user_id NOT IN (
@@ -1149,18 +1148,27 @@ async function notifyFullQueue(productId, store) {
 
         for (const row of queueUsers.rows) {
             try {
+                // VERIFICAÇÃO DUPLA DE SEGURANÇA ANTES DE ENVIAR MENSAGEM
+                // Garante que o usuário NÃO tenha reserva ativa neste exato milissegundo
+                const hasActiveRes = await pool.query(
+                    `SELECT COUNT(*) as count FROM product_reservations 
+                     WHERE user_id = $1 AND product_id = $2 AND status IN ('ACTIVE', 'SITE_RESERVATION') AND expires_at > NOW()`,
+                    [row.user_id, productId]
+                );
+                
+                // Se tiver reserva ativa, PULA este usuário completamente
+                if (parseInt(hasActiveRes.rows[0].count) > 0) continue;
+
                 const info = await pool.query(`SELECT * FROM get_user_queue_info($1, $2)`, [row.user_id, productId]);
                 if (info.rows.length === 0) continue;
                 
                 const user = await client.users.fetch(row.user_id);
                 const pos = info.rows[0].posicao;
                 
-                // CORREÇÃO DE CÁLCULO:
-                // Se for #2, espera ~10min (tempo do #1). Se for #3, espera ~20min, etc.
+                // Cálculo seguro de espera
                 const wait = Math.max(0, (pos - 1) * 10);
                 
-                // MENSAGEM CORRIGIDA: Só diz "You are #1" se ele realmente for o primeiro DA FILA
-                // e NÃO tiver reserva ativa (o que já foi filtrado acima)
+                // Mensagem corrigida
                 const msg = pos === 1 
                     ? `**You are #1 in the queue!**\nThe product will be available for you in approximately **${wait} minutes**.`
                     : `**Queue Position: #${pos}**\nEstimated wait time: ~**${wait} minutes**.`;
