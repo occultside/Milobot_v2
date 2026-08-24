@@ -1625,7 +1625,8 @@ function startPaymentSelectionTimer(userId, productId, store) {
         }
     }, PAYMENT_SELECTION_TIMEOUT);
 }
-
+// ====================== FUNÇÃO DE CANCELAMENTO POR INATIVIDADE ======================
+async function cancelReservationDueToInactivity(userId, productId, store, reason = "timeout") {
     try {
         // Cancela qualquer timer de 3 minutos que ainda esteja ativo
         if (clientSession[userId]?.paymentTimeoutId) {
@@ -1661,7 +1662,6 @@ function startPaymentSelectionTimer(userId, productId, store) {
                 store,
                 reason
             });
-
             await notifyNextInQueue(productId, store);
             return;
         }
@@ -1672,7 +1672,6 @@ function startPaymentSelectionTimer(userId, productId, store) {
         // =====================================================
         try {
             const user = await client.users.fetch(userId);
-
             await user.send({
                 content:
                     `⚠️ **Reservation Expired**\n\n` +
@@ -1703,7 +1702,6 @@ function startPaymentSelectionTimer(userId, productId, store) {
 
         // Promove o próximo
         await notifyNextInQueue(productId, store);
-
     } catch (err) {
         console.error(
             "Error cancelling reservation due to inactivity:",
