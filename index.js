@@ -1626,24 +1626,6 @@ function startPaymentSelectionTimer(userId, productId, store) {
     }, PAYMENT_SELECTION_TIMEOUT);
 }
 
-// ADICIONE ESTA FUNÇÃO EXATAMENTE AQUI 
-async function cancelReservationDueToInactivity(userId, productId, store, reason) {
-    try {
-        // 1. Expira somente uma reserva que ainda esteja realmente ativa
-        const expiredRes = await pool.query(
-            `UPDATE product_reservations
-             SET status = 'EXPIRED'
-             WHERE user_id = $1
-               AND product_id = $2
-               AND status IN ('ACTIVE', 'SITE_RESERVATION')
-               AND expires_at > NOW()
-             RETURNING *`,
-            [userId, productId]
-        );
-
-        // Se a reserva já foi expirada/processada, não faça nada.
-        if (expiredRes.rows.length === 0) {
-            return;async function cancelReservationDueToInactivity(userId, productId, store, reason) {
     try {
         // Cancela qualquer timer de 3 minutos que ainda esteja ativo
         if (clientSession[userId]?.paymentTimeoutId) {
