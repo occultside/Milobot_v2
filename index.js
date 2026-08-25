@@ -729,24 +729,29 @@ async function updateRefundStatusInSheet(ticketId, newStatus, analystName) {
 // Cria apenas os clientes que possuem chave válida. 
 // Se a chave não existir, usa null para não travar o boot do bot.
 
-console.log("===== STRIPE ENV TEST =====");
+console.log("===== STRIPE ENV DIAGNOSTIC =====");
+
+console.log(
+    Object.keys(process.env)
+        .filter(k => k.includes("STRIPE"))
+        .sort()
+);
 
 console.log(
     "SIDE SECRET:",
     process.env.STRIPE_SECRET_KEY_SIDE
-        ? `PRESENT (${process.env.STRIPE_SECRET_KEY_SIDE.length} chars)`
+        ? "PRESENT"
         : "MISSING"
 );
 
 console.log(
     "SIDE WEBHOOK:",
     process.env.STRIPE_WEBHOOK_SECRET_SIDE
-        ? `PRESENT (${process.env.STRIPE_WEBHOOK_SECRET_SIDE.length} chars)`
+        ? "PRESENT"
         : "MISSING"
 );
 
-console.log("===========================");
-
+console.log("================================");
 const stripeClients = {
     occult: process.env.STRIPE_SECRET_KEY_OCCULT ? new Stripe(process.env.STRIPE_SECRET_KEY_OCCULT) : null,
     side: process.env.STRIPE_SECRET_KEY_SIDE ? new Stripe(process.env.STRIPE_SECRET_KEY_SIDE) : null,
