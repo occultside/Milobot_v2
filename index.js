@@ -2991,10 +2991,28 @@ clientSession[interaction.user.id] = {
         if (interaction.isButton() && interaction.customId === "pay_stripe") {
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     const s = clientSession[interaction.user.id];
-    if (!s || s.step !== "waiting_for_payment_method") return interaction.editReply({ content: " Session expired or invalid.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
+    
+    if (!s || s.step !== "waiting_for_payment_method") {
+        return interaction.editReply({ 
+            content: "⚠️ Session expired or invalid.", 
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] 
+        });
+    }
 
     const customer = await ensureCustomer(interaction.user.id);
-    if ((customer.blocked_stores || []).includes(s.product.store)) return interaction.editReply({ content: "🚫 Access Denied." });
+    if ((customer.blocked_stores || []).includes(s.product.store)) {
+        return interaction.editReply({ content: "🚫 Access Denied." });
+    }
+
+    // VERIFICAÇÃO DE SEGURANÇA DO CLIENTE STRIPE
+    const stripeClient = stripeClients[s.product.store];
+    if (!stripeClient) {
+        console.error(` CRITICAL: Stripe client for ${s.product.store} is NULL! Check env vars.`);
+        return interaction.editReply({ 
+            content: `⚠️ Payment system temporarily unavailable for **${s.product.store.toUpperCase()}**. Please try again later.`, 
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Start New Order").setStyle(ButtonStyle.Secondary))] 
+        });
+    }
 
     const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium';
     const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price;
@@ -3007,7 +3025,6 @@ clientSession[interaction.user.id] = {
         const product = (await pool.query(`SELECT * FROM products WHERE id = $1`, [s.product.id])).rows[0];
         await sendToPortfolio(product, interaction.user.id);
         await syncShowcase({ ...product, archived: true });
-
         try {
             const dm = await interaction.user.createDM();
             await dm.send({
@@ -3015,39 +3032,16 @@ clientSession[interaction.user.id] = {
                 components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("📥 Receive Product").setStyle(ButtonStyle.Link).setURL(product.file_download))]
             });
         } catch (e) { console.error("Failed to send DM delivery:", e); }
-
         await clearQueueAndNotifyBought(s.product.id, s.product.store);
         if (clientSession[interaction.user.id]?.paymentTimeoutId) clearTimeout(clientSession[interaction.user.id].paymentTimeoutId);
         delete clientSession[interaction.user.id];
-
         return interaction.editReply({
             content: "✅ Purchase successful! Check your DMs for the download link.",
             components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Primary))]
         });
     }
 
-    const stripeClient = stripeClients[s.product.store];
-// ... dentro do pay_stripe, após verificar preço e créditos ...
-
-const stripeClient = stripeClients[s.product.store];
-
-// 👇 ADICIONE ESTA VERIFICAÇÃO DE SEGURANÇA 👇
-if (!stripeClient) {
-    console.error(`❌ CRITICAL: Stripe client for ${s.product.store} is NULL! Check env vars.`);
-    return interaction.editReply({ 
-        content: `⚠️ Payment system temporarily unavailable for **${s.product.store.toUpperCase()}**. Please try again later.`, 
-        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))]
-    });
-}
-// ----------------------------------
-
-const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
-try {
-    const session = await stripeClient.checkout.sessions.create({
-// ... resto do código original continua igual ...
-            
     const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
-
     try {
         const session = await stripeClient.checkout.sessions.create({
             payment_method_types: ['card'],
@@ -3059,22 +3053,19 @@ try {
             metadata: { product_id: s.product.id, store: s.product.store, credits_used: 0 }
         });
 
-        // 🔒 BLINDAGEM DE URL: Garante que não ultrapasse 512 caracteres
+        // BLINDAGEM DE URL
         let safeUrl = session.url;
         if (safeUrl && safeUrl.length > 512) {
-            console.warn(`⚠️ Stripe URL too long (${safeUrl.length} chars). Trimming parameters...`);
+            console.warn(`️ Stripe URL too long (${safeUrl.length} chars). Trimming parameters...`);
             const baseUrl = safeUrl.split('?')[0];
             const params = new URLSearchParams(safeUrl.split('?')[1]);
             const essentialParams = new URLSearchParams();
-            // Mantém apenas parâmetros essenciais para o checkout funcionar
             ['session_id', 'locale'].forEach(key => {
                 if (params.has(key)) essentialParams.set(key, params.get(key));
             });
             safeUrl = `${baseUrl}?${essentialParams.toString()}`;
-
-            // Se ainda estiver longo, usa fallback seguro
             if (safeUrl.length > 512) {
-                console.error(`❌ CRITICAL: URL still too long after trimming (${safeUrl.length}). Using dashboard fallback.`);
+                console.error(`❌ CRITICAL: URL still too long after trimming. Using dashboard fallback.`);
                 safeUrl = `https://dashboard.stripe.com/payments/${session.payment_intent || 'search'}`;
             }
         }
@@ -3086,13 +3077,14 @@ try {
     } catch (err) {
         console.error("🔴 STRIPE SESSION ERROR:", err.message);
         console.error(" STRIPE TYPE:", err.type);
-        console.error("🔴 STRIPE PARAM:", err.param);
+        console.error(" STRIPE PARAM:", err.param);
         await interaction.editReply({
             content: `⚠️ Stripe Error: ${err.message}`,
-            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))]
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel(" Start New Order").setStyle(ButtonStyle.Secondary))]
         });
     }
 }
+     
         if (interaction.isButton() && interaction.customId === "pay_lindens") {
             const s = clientSession[interaction.user.id]; 
             if (!s || s.step !== "waiting_for_payment_method") return interaction.reply({ content: "❌ Session expired.", flags: [MessageFlags.Ephemeral], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
