@@ -70,7 +70,7 @@ console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_
 
 // ====================== ESTADO GLOBAL & CONFIGURAÇÕES ======================
 let isMaintenanceMode = false;
-let isStripeDisabled = false; // Novo interruptor para desativar Stripe
+let isStripeDisabled = false; // <--- ADICIONE ESTA LINHA AQUI
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 const SHOWCASE_FORUM_ID = "1512933679448457348";
 const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
@@ -1799,44 +1799,29 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
     try {
-        // ====================== ESCUDO DE MANUTENÇÃO ======================
-        if (isMaintenanceMode) {
-            else if (DEV_IDS.includes(interaction.user.id)) { /* Deixa passar */ }
-            else {
-                const maintenanceEmbed = new EmbedBuilder().setTitle("️ System Under Maintenance").setDescription("We are currently performing scheduled updates to improve your experience.\nThe bot will be back online shortly. Please try again in a few minutes.\n\nThank you for your patience!").setColor(0xff9900).setTimestamp();
-                if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
-                    return interaction.reply({ embeds: [maintenanceEmbed], flags: [MessageFlags.Ephemeral] }).catch(() => {});
-                }
-                else return interaction.reply({ embeds: [maintenanceEmbed], flags: [MessageFlags.Ephemeral] }).catch(() => {});
-            }
-        }
-
-        if (clientSession[interaction.user.id]) resetSessionTimer(interaction.user.id);
-        
-        // CORREÇÃO 2: ESPELHAMENTO TOTAL DE BOTÕES (Antes de qualquer lógica)
-        if (interaction.isButton() || interaction.isStringSelectMenu()) {
-            const uid = interaction.user.id;
-            const hasLog = (await pool.query(`SELECT log_key_occult, log_key_side, log_key_occult_x_side FROM customers WHERE user_id = $1`, [uid])).rows[0];
+            // ====================== ESCUDO DE MANUTENÇÃO ======================
+    if (isMaintenanceMode) {
+        if (interaction.isChatInputCommand() && interaction.commandName === "dev") { 
+            /* Deixa passar */ 
+        } else if (DEV_IDS.includes(interaction.user.id)) { 
+            /* Deixa passar */ 
+        } else {
+            const maintenanceEmbed = new EmbedBuilder()
+                .setTitle("⚠️ System Under Maintenance")
+                .setDescription("We are currently performing scheduled updates to improve your experience.\nThe bot will be back online shortly. Please try again in a few minutes.\n\nThank you for your patience!")
+                .setColor(0xff9900)
+                .setTimestamp();
             
-            if (clientSession[uid] || (hasLog && (hasLog.log_key_occult || hasLog.log_key_side || hasLog.log_key_occult_x_side))) {
-                let label = interaction.customId;
-                if (interaction.isButton()) label = interaction.component.label || interaction.customId;
-                
-                let logMsg = `Clicked button: ${label}`;
-                if (interaction.customId === 'tech_info') logMsg = "Opened Technical Information";
-                else if (interaction.customId === 'payment_method') logMsg = "Selected Payment Method";
-                else if (interaction.customId === 'report_payment_lindens') logMsg = "Clicked Report Payment";
-                else if (interaction.customId === 'end_session') logMsg = "Clicked End Session";
-                else if (interaction.customId.startsWith('pay_')) logMsg = `Selected Payment: ${label}`;
-                else if (interaction.customId.startsWith('support_')) logMsg = `Support Menu: ${label}`;
-                else if (interaction.customId.startsWith('refund_')) logMsg = `Refund Action: ${label}`;
-                
-                await mirrorToLog(uid, logMsg, 'bot', { username: interaction.user.username });
+            if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
+                return interaction.reply({ embeds: [maintenanceEmbed], flags: [MessageFlags.Ephemeral] }).catch(() => {});
+            } else {
+                return interaction.reply({ embeds: [maintenanceEmbed], flags: [MessageFlags.Ephemeral] }).catch(() => {});
             }
         }
+    }
 
-        // ====================== COMANDO /RELATORIO ======================
-        if (interaction.isChatInputCommand() && interaction.commandName === "relatorio") {
+    // ====================== COMANDO /RELATORIO ======================
+    if (interaction.isChatInputCommand() && interaction.commandName === "relatorio") {
             const member = await interaction.guild.members.fetch(interaction.user.id);
             if (interaction.guild.ownerId !== interaction.user.id && !member.roles.cache.has(ADMIN_ROLE_ID)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
             
