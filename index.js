@@ -70,6 +70,7 @@ console.log("DEBUG KEY END:", SERVICE_ACCOUNT_KEY.private_key.substring(SERVICE_
 
 // ====================== ESTADO GLOBAL & CONFIGURAÇÕES ======================
 let isMaintenanceMode = false;
+let isStripeDisabled = false; // Novo interruptor para desativar Stripe
 const DEV_IDS = ["721614093269729292", "971051392456331324", "1356140129865175221"];
 const SHOWCASE_FORUM_ID = "1512933679448457348";
 const PORTFOLIO_CHANNEL_ID = "1538751620064485487";
@@ -1900,19 +1901,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
         }
 
-        if (interaction.isButton() && interaction.customId === "dev_toggle_maintenance") {
-            if (!DEV_IDS.includes(interaction.user.id)) return;
-            isMaintenanceMode = !isMaintenanceMode;
-            
-            const embed = new EmbedBuilder().setTitle("️ Developer Control Panel").setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}`).setColor(0x2c3e50);
-            const components = [new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
-                new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
-                new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
-            )];
-            
-            return interaction.update({ embeds: [embed], components });
-        }
+        if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
+    if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
+    
+    const embed = new EmbedBuilder()
+        .setTitle("⚙️ Developer Control Panel")
+        .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? ' **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+        .setColor(0x2c3e50);
+        
+    const components = [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+        // NOVO BOTÃO AQUI 
+        new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
+        new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+    )];
+    return interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+}
 
         if (interaction.isButton() && interaction.customId === "dev_clear_session") {
             if (!DEV_IDS.includes(interaction.user.id)) return;
@@ -3014,6 +3019,18 @@ clientSession[interaction.user.id] = {
 
         if (interaction.isButton() && interaction.customId === "pay_stripe") {
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+    
+    // VERIFICAÇÃO DO INTERRUPTOR GLOBAL 
+    if (isStripeDisabled) {
+        return interaction.editReply({ 
+            content: "⚠️ **Pagamentos via Stripe estão temporariamente desativados.**\nPor favor, utilize Lindens ou Créditos da loja.", 
+            components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] 
+        });
+    }
+    
+    const s = clientSession[interaction.user.id];
+    // ... resto do código existente ...
+}
     const s = clientSession[interaction.user.id];
     
     if (!s || s.step !== "waiting_for_payment_method") {
