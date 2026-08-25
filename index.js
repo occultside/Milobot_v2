@@ -1907,23 +1907,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId === "dev_toggle_stripe") {
-        if (!DEV_IDS.includes(interaction.user.id)) return;
-        isStripeDisabled = !isStripeDisabled;
-        
-        const embed = new EmbedBuilder()
-            .setTitle("⚙️ Developer Control Panel")
-            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : ' **ENABLED'**}`)
-            .setColor(0x2c3e50);
-            
-        const components = [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
-            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(` Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
-            new ButtonBuilder().setCustomId("dev_export_csv").setLabel(" Exportar CSV").setStyle(ButtonStyle.Secondary)
-        )];
-        return interaction.update({ embeds: [embed], components });
-    }
-
+     if (!DEV_IDS.includes(interaction.user.id)) return;
+     isStripeDisabled = !isStripeDisabled;
+     const embed = new EmbedBuilder()
+         .setTitle("⚙️ Developer Control Panel")
+         // CORREÇÃO AQUI: Removido o '*' extra após ENABLED
+         .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED**'}`)
+         .setColor(0x2c3e50);
+     const components = [new ActionRowBuilder().addComponents(
+         new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+         new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+         new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
+         new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+     )];
+     return interaction.update({ embeds: [embed], components });
+ }
     if (interaction.isButton() && interaction.customId === "dev_clear_session") {
         if (!DEV_IDS.includes(interaction.user.id)) return;
         const modal = new ModalBuilder().setCustomId("dev_modal_clear_session").setTitle("Limpar Sessão de Cliente").addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user_id").setLabel("ID do Usuário").setStyle(TextInputStyle.Short).setRequired(true)));
