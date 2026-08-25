@@ -1887,75 +1887,91 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
         }
 
-        // ====================== COMANDO /DEV ======================
-        if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
-            if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
-            
-            const embed = new EmbedBuilder().setTitle("️ Developer Control Panel").setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}`).setColor(0x2c3e50);
-            const components = [new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
-                new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
-                new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
-            )];
-            
-            return interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
-        }
-
-        if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
-    if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
-    
-    const embed = new EmbedBuilder()
-        .setTitle("⚙️ Developer Control Panel")
-        .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? ' **DISABLED**' : '🟢 **ENABLED'**}`)
-//                                                                                                                                             ^ FALTA UMA ASPA AQUI
-        .setColor(0x2c3e50);
+            // ====================== COMANDO /DEV ======================
+    if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
+        if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: " Acesso negado.", flags: [MessageFlags.Ephemeral] });
         
-    const components = [new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
-        // NOVO BOTÃO AQUI 
-        new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
-        new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
-    )];
-    return interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
-}
-
-        if (interaction.isButton() && interaction.customId === "dev_clear_session") {
-            if (!DEV_IDS.includes(interaction.user.id)) return;
-            const modal = new ModalBuilder().setCustomId("dev_modal_clear_session").setTitle("Limpar Sessão de Cliente").addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user_id").setLabel("ID do Usuário").setStyle(TextInputStyle.Short).setRequired(true)));
-            return interaction.showModal(modal);
-        }
-
-        if (interaction.isModalSubmit() && interaction.customId === "dev_modal_clear_session") {
-            if (!DEV_IDS.includes(interaction.user.id)) return;
-            const targetId = interaction.fields.getTextInputValue("target_user_id");
-            if (clientSession[targetId]) { 
-                delete clientSession[targetId]; 
-                return interaction.reply({ content: `✅ Sessão do usuário \`${targetId}\` limpa com sucesso!`, flags: [MessageFlags.Ephemeral] }); 
-            }
-            else return interaction.reply({ content: `ℹ️ O usuário \`${targetId}\` não possui sessão ativa.`, flags: [MessageFlags.Ephemeral] });
-        }
-
-        if (interaction.isButton() && interaction.customId === "dev_export_csv") {
-            if (!DEV_IDS.includes(interaction.user.id)) return;
-            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const embed = new EmbedBuilder()
+            .setTitle("⚙️ Developer Control Panel")
+            .setDescription(`System Status:  **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : ' **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setColor(0x2c3e50);
             
-            try {
-                const res = await pool.query(`SELECT created_at, product_id, store, user_id, payment_method, status FROM partnership_approvals WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' ORDER BY created_at DESC`);
-                let csvContent = "Data,ID Produto,Loja,ID Comprador,Metodo,Status\n";
-                res.rows.forEach(row => { 
-                    const dateStr = row.created_at ? new Date(row.created_at).toLocaleString('pt-BR') : 'N/A';
-                    csvContent += `"${dateStr}","${row.product_id}","${row.store}","${row.user_id}","${row.payment_method}","${row.status}"\n`; 
-                });
-                
-                const attachment = new AttachmentBuilder(Buffer.from(csvContent, 'utf-8'), { name: `vendas_semana_${new Date().toISOString().split('T')[0]}.csv` });
-                return interaction.editReply({ content: "📄 Relatório dos últimos 7 dias gerado com sucesso!", files: [attachment] });
-            } catch (err) { 
-                console.error("CSV Error:", err);
-                return interaction.editReply({ content: "❌ Erro ao gerar CSV. Verifique os logs." }); 
-            }
-        }
+        const components = [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
+            new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+        )];
+        return interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+    }
 
+    if (interaction.isButton() && interaction.customId === "dev_toggle_maintenance") {
+        if (!DEV_IDS.includes(interaction.user.id)) return;
+        isMaintenanceMode = !isMaintenanceMode;
+        
+        const embed = new EmbedBuilder()
+            .setTitle("⚙️ Developer Control Panel")
+            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? ' **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setColor(0x2c3e50);
+            
+        const components = [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
+            new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+        )];
+        return interaction.update({ embeds: [embed], components });
+    }
+
+    if (interaction.isButton() && interaction.customId === "dev_toggle_stripe") {
+        if (!DEV_IDS.includes(interaction.user.id)) return;
+        isStripeDisabled = !isStripeDisabled;
+        
+        const embed = new EmbedBuilder()
+            .setTitle("⚙️ Developer Control Panel")
+            .setDescription(`System Status:  **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : ' **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setColor(0x2c3e50);
+            
+        const components = [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
+            new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+        )];
+        return interaction.update({ embeds: [embed], components });
+    }
+
+    if (interaction.isButton() && interaction.customId === "dev_clear_session") {
+        if (!DEV_IDS.includes(interaction.user.id)) return;
+        const modal = new ModalBuilder().setCustomId("dev_modal_clear_session").setTitle("Limpar Sessão de Cliente").addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("target_user_id").setLabel("ID do Usuário").setStyle(TextInputStyle.Short).setRequired(true)));
+        return interaction.showModal(modal);
+    }
+    if (interaction.isModalSubmit() && interaction.customId === "dev_modal_clear_session") {
+        if (!DEV_IDS.includes(interaction.user.id)) return;
+        const targetId = interaction.fields.getTextInputValue("target_user_id");
+        if (clientSession[targetId]) { 
+            delete clientSession[targetId]; 
+            return interaction.reply({ content: `✅ Sessão do usuário \`${targetId}\` limpa com sucesso!`, flags: [MessageFlags.Ephemeral] }); 
+        }
+        else return interaction.reply({ content: `ℹ️ O usuário \`${targetId}\` não possui sessão ativa.`, flags: [MessageFlags.Ephemeral] });
+    }
+    if (interaction.isButton() && interaction.customId === "dev_export_csv") {
+        if (!DEV_IDS.includes(interaction.user.id)) return;
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        try {
+            const res = await pool.query(`SELECT created_at, product_id, store, user_id, payment_method, status FROM partnership_approvals WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' ORDER BY created_at DESC`);
+            let csvContent = "Data,ID Produto,Loja,ID Comprador,Metodo,Status\n";
+            res.rows.forEach(row => { 
+                const dateStr = row.created_at ? new Date(row.created_at).toLocaleString('pt-BR') : 'N/A';
+                csvContent += `"${dateStr}","${row.product_id}","${row.store}","${row.user_id}","${row.payment_method}","${row.status}"\n`; 
+            });
+            const attachment = new AttachmentBuilder(Buffer.from(csvContent, 'utf-8'), { name: `vendas_semana_${new Date().toISOString().split('T')[0]}.csv` });
+            return interaction.editReply({ content: "📄 Relatório dos últimos 7 dias gerado com sucesso!", files: [attachment] });
+        } catch (err) { 
+            console.error("CSV Error:", err);
+            return interaction.editReply({ content: "❌ Erro ao gerar CSV. Verifique os logs." }); 
+        }
+    }
         // ====================== COMANDO /ADMIN-CLIENTE ======================
         if (interaction.isChatInputCommand() && interaction.commandName === "admin-cliente") {
             const member = await interaction.guild.members.fetch(interaction.user.id);
