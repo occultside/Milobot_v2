@@ -1872,12 +1872,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
            // ====================== COMANDO /DEV ======================
     if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
-        if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
-        
-        const embed = new EmbedBuilder()
-            .setTitle("⚙️ Developer Control Panel")
-            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : ' **ENABLED'**}`)
-            .setColor(0x2c3e50);
+    if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
+    const embed = new EmbedBuilder()
+        .setTitle("⚙️ Developer Control Panel")
+        // CORREÇÃO AQUI: Removido o '*' extra
+        .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED**'}`)
+        .setColor(0x2c3e50);
             
         const components = [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
