@@ -3117,7 +3117,7 @@ clientSession[interaction.user.id] = {
             if ((customer.blocked_stores || []).includes(s.product.store)) return interaction.reply({ content: "🚫 Access Denied.", flags: [MessageFlags.Ephemeral] });
             
             const store = s.product.store; 
-            const slUser = store === "occult" ? "@bbydot" : store === "side" ? "@itslev" : "@bbydot / @itslev";
+            const slUser = store === "occult" ? "@bbydott" : store === "side" ? "@itslev" : "@bbydott / @itslev";
             
             const isPremium = (await checkAndUpdateTier(interaction.user.id)).newTier === 'premium'; 
             const prices = typeof s.product.price === 'string' ? JSON.parse(s.product.price) : s.product.price; 
