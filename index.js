@@ -1906,7 +1906,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     const embed = new EmbedBuilder()
         .setTitle("⚙️ Developer Control Panel")
-        .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? ' **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+        .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? ' **DISABLED**' : '🟢 **ENABLED'**}`)
+//                                                                                                                                             ^ FALTA UMA ASPA AQUI
         .setColor(0x2c3e50);
         
     const components = [new ActionRowBuilder().addComponents(
