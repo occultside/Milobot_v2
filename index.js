@@ -1801,7 +1801,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
         // ====================== ESCUDO DE MANUTENÇÃO ======================
         if (isMaintenanceMode) {
-            if (interaction.isChatInputCommand() && interaction.commandName === "dev") { /* Deixa passar */ }
             else if (DEV_IDS.includes(interaction.user.id)) { /* Deixa passar */ }
             else {
                 const maintenanceEmbed = new EmbedBuilder().setTitle("️ System Under Maintenance").setDescription("We are currently performing scheduled updates to improve your experience.\nThe bot will be back online shortly. Please try again in a few minutes.\n\nThank you for your patience!").setColor(0xff9900).setTimestamp();
@@ -1886,17 +1885,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.editReply({ content: "❌ Erro ao gerar relatório. Verifique os logs." });
             }
         }
-    // ====================== COMANDO /DEV ======================
+       // ====================== COMANDO /DEV ======================
     if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
-        if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: " Acesso negado.", flags: [MessageFlags.Ephemeral] });
+        if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
         
         const embed = new EmbedBuilder()
             .setTitle("⚙️ Developer Control Panel")
-            .setDescription(`System Status:  **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : ' **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : ' **ENABLED'**}`)
             .setColor(0x2c3e50);
             
         const components = [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
             new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
@@ -1910,11 +1909,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         const embed = new EmbedBuilder()
             .setTitle("⚙️ Developer Control Panel")
-            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? ' **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
             .setColor(0x2c3e50);
             
         const components = [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
             new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
@@ -1928,11 +1927,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         
         const embed = new EmbedBuilder()
             .setTitle("⚙️ Developer Control Panel")
-            .setDescription(`System Status:  **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : ' **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : '🟢 **ENABLED'**}`)
+            .setDescription(`System Status: 🟢 **Online** | Maintenance: ${isMaintenanceMode ? '🟡 **ON**' : '🟢 **OFF**'}\nStripe Payments: ${isStripeDisabled ? '🔴 **DISABLED**' : ' **ENABLED'**}`)
             .setColor(0x2c3e50);
             
         const components = [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
             new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
