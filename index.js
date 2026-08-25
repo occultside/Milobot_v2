@@ -735,6 +735,7 @@ const stripeClients = {
 };
 
 // Verifica se pelo menos a loja principal está ativa
+// ... código existente ...
 if (!stripeClients.occult) {
     console.error("🔴 CRITICAL: STRIPE_SECRET_KEY_OCCULT is missing. Bot cannot start.");
     process.exit(1);
@@ -743,6 +744,11 @@ if (!stripeClients.occult) {
     if (stripeClients.side) console.log("✅ Stripe Client initialized for: SIDE");
     if (stripeClients.occult_x_side) console.log("✅ Stripe Client initialized for: OCCULTSIDE");
 }
+
+// 👇 ADICIONE ESTE BLOCO AQUI 👇
+console.log("🔍 DEBUG SIDE KEY:", process.env.STRIPE_SECRET_KEY_SIDE ? "PRESENT (" + process.env.STRIPE_SECRET_KEY_SIDE.substring(0, 10) + "...)" : "MISSING/NULL");
+console.log("🔍 DEBUG SIDE CLIENT:", stripeClients.side ? "INITIALIZED" : "NULL");
+// ----------------------------------
 
 const WEBHOOK_SECRETS = {
     occult: process.env.STRIPE_WEBHOOK_SECRET_OCCULT,
@@ -3021,6 +3027,25 @@ clientSession[interaction.user.id] = {
     }
 
     const stripeClient = stripeClients[s.product.store];
+// ... dentro do pay_stripe, após verificar preço e créditos ...
+
+const stripeClient = stripeClients[s.product.store];
+
+// 👇 ADICIONE ESTA VERIFICAÇÃO DE SEGURANÇA 👇
+if (!stripeClient) {
+    console.error(`❌ CRITICAL: Stripe client for ${s.product.store} is NULL! Check env vars.`);
+    return interaction.editReply({ 
+        content: `⚠️ Payment system temporarily unavailable for **${s.product.store.toUpperCase()}**. Please try again later.`, 
+        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))]
+    });
+}
+// ----------------------------------
+
+const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
+try {
+    const session = await stripeClient.checkout.sessions.create({
+// ... resto do código original continua igual ...
+            
     const priceId = isPremium ? s.product.stripe_price_premium_id : s.product.stripe_price_basic_id;
 
     try {
