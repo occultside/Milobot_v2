@@ -1870,7 +1870,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.editReply({ content: "❌ Erro ao gerar relatório. Verifique os logs." });
             }
         }
-       // ====================== COMANDO /DEV ======================
+           // ====================== COMANDO /DEV ======================
     if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
         if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: "❌ Acesso negado.", flags: [MessageFlags.Ephemeral] });
         
@@ -1898,7 +1898,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setColor(0x2c3e50);
             
         const components = [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(` Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
+            new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
             new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
             new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
@@ -1917,9 +1917,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             
         const components = [new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId("dev_toggle_maintenance").setLabel(`🚧 Manutenção: ${isMaintenanceMode ? 'DESATIVAR' : 'ATIVAR'}`).setStyle(isMaintenanceMode ? ButtonStyle.Success : ButtonStyle.Danger), 
-            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(`💳 Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dev_toggle_stripe").setLabel(` Stripe: ${isStripeDisabled ? 'ATIVAR' : 'DESATIVAR'}`).setStyle(isStripeDisabled ? ButtonStyle.Success : ButtonStyle.Danger),
             new ButtonBuilder().setCustomId("dev_clear_session").setLabel("🧹 Limpar Sessão").setStyle(ButtonStyle.Primary), 
-            new ButtonBuilder().setCustomId("dev_export_csv").setLabel("📄 Exportar CSV").setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId("dev_export_csv").setLabel(" Exportar CSV").setStyle(ButtonStyle.Secondary)
         )];
         return interaction.update({ embeds: [embed], components });
     }
@@ -1936,7 +1936,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             delete clientSession[targetId]; 
             return interaction.reply({ content: `✅ Sessão do usuário \`${targetId}\` limpa com sucesso!`, flags: [MessageFlags.Ephemeral] }); 
         }
-        else return interaction.reply({ content: `ℹ️ O usuário \`${targetId}\` não possui sessão ativa.`, flags: [MessageFlags.Ephemeral] });
+        else return interaction.reply({ content: `️ O usuário \`${targetId}\` não possui sessão ativa.`, flags: [MessageFlags.Ephemeral] });
     }
     if (interaction.isButton() && interaction.customId === "dev_export_csv") {
         if (!DEV_IDS.includes(interaction.user.id)) return;
