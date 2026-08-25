@@ -1886,8 +1886,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 return interaction.editReply({ content: "❌ Erro ao gerar relatório. Verifique os logs." });
             }
         }
-
-            // ====================== COMANDO /DEV ======================
+    // ====================== COMANDO /DEV ======================
     if (interaction.isChatInputCommand() && interaction.commandName === "dev") {
         if (!DEV_IDS.includes(interaction.user.id)) return interaction.reply({ content: " Acesso negado.", flags: [MessageFlags.Ephemeral] });
         
