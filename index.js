@@ -2067,77 +2067,117 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return interaction.editReply({ content: `✅ Approved & delivered! Product archived and added to portfolio.`, components: [] });
         }
 
-        if (interaction.isButton() && interaction.customId.startsWith("confirm_deny_receipt_")) {
-            await interaction.deferUpdate();
-            const targetUserId = interaction.customId.replace("confirm_deny_receipt_", "");
-            const approvalData = pendingApprovals[targetUserId];
-            
-            if (!approvalData) return interaction.editReply({ content: "❌ Expired.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
-            if (approvalData.processed) return interaction.editReply({ content: `⚠️ This action has already been processed by ${approvalData.processedBy}.`, components: [] });
-            
-            approvalData.attempts = (approvalData.attempts || 0) + 1;
-            
-            // --- LIBERAR PRODUTO SE REPROVADO ---
-            try {
-                // Desarquiva no Banco de Dados
-                await pool.query(`UPDATE products SET archived = FALSE WHERE id = $1`, [approvalData.productId]);
-                
-                // Atualiza Planilha para "Disponível" novamente
-                const jwtClient = await getJwtClient();
-                const fullRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A:R`, { 
-                    headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` } 
-                });
-                const fullData = await fullRes.json();
-                const rows = fullData.values || [];
-                let rowIndex = -1;
-                for (let i = 1; i < rows.length; i++) {
-                    if (rows[i][0] && rows[i][0].toString().trim() === approvalData.productId.toString().trim()) {
-                        rowIndex = i + 1;
-                        break;
-                    }
-                }
-                if (rowIndex !== -1) {
-                    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!E${rowIndex}`, { 
-                        method: 'PUT', 
-                        headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify({ values: [['🟢 Disponível']] }) 
-                    });
-                }
-                
-                // Notificar próxima pessoa da fila que o produto voltou
-                await notifyNextInQueue(approvalData.productId, approvalData.store);
-                
-            } catch (e) { console.error("Erro ao liberar produto reprovado:", e); }
-            // ------------------------------------
+            if (interaction.isButton() && interaction.customId.startsWith("confirm_deny_receipt_")) {
+        await interaction.deferUpdate();
+        const targetUserId = interaction.customId.replace("confirm_deny_receipt_", "");
+        const approvalData = pendingApprovals[targetUserId];
+        
+        // Segurança: Se os dados já foram processados ou não existem
+        if (!approvalData) return interaction.editReply({ content: "❌ Expired.", components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("start_new_order").setLabel("🛒 Start New Order").setStyle(ButtonStyle.Secondary))] });
+        if (approvalData.processed) return interaction.editReply({ content: `⚠️ This action has already been processed by ${approvalData.processedBy}.`, components: [] });
 
-            try {
-                const customer = await client.users.fetch(targetUserId); 
-                const dm = await customer.createDM();
-                const remaining = MAX_RECEIPT_ATTEMPTS - approvalData.attempts;
-                
-                if (remaining > 0) await dm.send({ 
+        // Incrementa a tentativa atual
+        approvalData.attempts = (approvalData.attempts || 0) + 1;
+        
+        // Calcula quantas faltam
+        const remaining = MAX_RECEIPT_ATTEMPTS - approvalData.attempts;
+
+        // --- LIBERAR PRODUTO SE REPROVADO (Sempre libera para a fila voltar) ---
+        try {
+            // Desarquiva no Banco de Dados
+            await pool.query(`UPDATE products SET archived = FALSE WHERE id = $1`, [approvalData.productId]);
+            
+            // Atualiza Planilha para "Disponível" novamente
+            const jwtClient = await getJwtClient();
+            const fullRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!A:R`, { 
+                headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}` } 
+            });
+            const fullData = await fullRes.json();
+            const rows = fullData.values || [];
+            let rowIndex = -1;
+            for (let i = 1; i < rows.length; i++) {
+                if (rows[i][0] && rows[i][0].toString().trim() === approvalData.productId.toString().trim()) {
+                    rowIndex = i + 1;
+                    break;
+                }
+            }
+            if (rowIndex !== -1) {
+                await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(SHEET_NAME)}!E${rowIndex}`, { 
+                    method: 'PUT', 
+                    headers: { 'Authorization': `Bearer ${jwtClient.credentials.access_token}`, 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ values: [['🟢 Disponível']] }) 
+                });
+            }
+            
+            // Notificar próxima pessoa da fila que o produto voltou
+            await notifyNextInQueue(approvalData.productId, approvalData.store);
+        } catch (e) { console.error("Erro ao liberar produto reprovado:", e); }
+        // ------------------------------------
+
+        try {
+            const customer = await client.users.fetch(targetUserId); 
+            const dm = await customer.createDM();
+
+            // LÓGICA CORIGIDA PARA TENTATIVAS
+            if (remaining > 0) {
+                // Ainda tem tentativas: Manda mensagem de erro mas mantém o fluxo
+                await dm.send({ 
                     content: `❌ **PAYMENT DENIED**\n\nWe could not verify your payment. Please check if the payment was completed correctly.\n\nYou have **${remaining} attempt(s)** remaining to submit a new receipt.`, 
                     components: [new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId("report_payment_lindens").setLabel("📄 Send New Receipt").setStyle(ButtonStyle.Primary), 
                         new ButtonBuilder().setCustomId("contact_support").setLabel("💬 Contact Support").setStyle(ButtonStyle.Secondary)
                     )] 
                 });
-                else { 
-                    await dm.send({ 
-                        content: `❌ **PAYMENT DENIED**\n\nAll receipt attempts have been exhausted. Please contact support for assistance.`, 
-                        components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("contact_support").setLabel("💬 Contact Support").setStyle(ButtonStyle.Primary))] 
-                    }); 
-                    delete pendingApprovals[targetUserId]; 
-                }
                 
+                // IMPORTANTE: Não deletamos o pendingApprovals aqui para manter o contador de attempts
+                // Mas marcamos como processado temporariamente para evitar cliques duplos nos botões de approve/deny antigos
                 approvalData.processed = true; 
                 approvalData.processedBy = interaction.user.username;
                 await invalidateApprovalButtons(approvalData, `❌ Denied by ${interaction.user.username}. Customer notified.`);
-            } catch (err) {}
-            
-            await mirrorToLog(targetUserId, `Payment denied (attempt ${approvalData.attempts}/${MAX_RECEIPT_ATTEMPTS})`, 'bot', { username: 'System' });
-            return interaction.editReply({ content: `❌ Denied. Customer notified and product released.`, components: [] });
+                
+                // Recriamos a entrada no pendingApprovals para a próxima tentativa, mantendo o contador
+                // Isso garante que o próximo "report_payment_lindens" saiba quantas tentativas já foram usadas
+                pendingApprovals[targetUserId] = {
+                    ...approvalData,
+                    processed: false, // Reseta para permitir nova aprovação/negação
+                    messageRefs: []   // Limpa referências antigas de mensagens
+                };
+
+            } else {
+                // ÚLTIMA TENTATIVA ESgotada
+                await dm.send({ 
+                    content: `❌ **PAYMENT DENIED - FINAL ATTEMPT**\n\nAll receipt attempts have been exhausted. Your reservation has been cancelled and you have been removed from the queue.\n\nPlease contact support for assistance.`, 
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`contact_support_${approvalData.store}`).setLabel("💬 Contact Support").setStyle(ButtonStyle.Primary)
+                    )] 
+                }); 
+                
+                // Remove da fila explicitamente pois as tentativas acabaram
+                await pool.query(`DELETE FROM queue_notifications WHERE user_id = $1 AND product_id = $2`, [targetUserId, approvalData.productId]);
+                
+                // Limpa a sessão do cliente para impedir que ele continue no fluxo de pagamento
+                delete clientSession[targetUserId];
+                
+                // Limpa os dados de aprovação pendente
+                delete pendingApprovals[targetUserId]; 
+                
+                approvalData.processed = true; 
+                approvalData.processedBy = interaction.user.username;
+                await invalidateApprovalButtons(approvalData, `❌ Denied (Final). Customer removed from queue.`);
+            }
+        } catch (err) {
+            console.error("Error notifying customer of denial:", err);
         }
+        
+        await mirrorToLog(targetUserId, `Payment denied (attempt ${approvalData.attempts}/${MAX_RECEIPT_ATTEMPTS})`, 'bot', { username: 'System' });
+        
+        // Só responde a interação se não for a última tentativa (pois na última já deletamos o pendingApprovals acima)
+        if (remaining > 0) {
+             return interaction.editReply({ content: `❌ Denied. Customer notified. They have ${remaining} attempts left.`, components: [] });
+        } else {
+             return interaction.editReply({ content: `❌ Denied. Final attempt used. Customer removed from queue.`, components: [] });
+        }
+    }
 
         if (interaction.isButton() && interaction.customId.startsWith("approve_receipt_")) {
             const targetUserId = interaction.customId.replace("approve_receipt_", ""); 
